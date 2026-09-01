@@ -1,0 +1,55 @@
+name: epomail
+description: EpoCanvas Mail — Native Android client
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP networking
+  dio: ^5.7.0
+  connectivity_plus: ^6.0.5
+
+  # State management
+  provider: ^6.1.2
+
+  # Secure storage
+  shared_preferences: ^2.3.2
+  flutter_secure_storage: ^9.2.2
+
+  # UI components
+  google_fonts: ^6.2.1
+  cached_network_image: ^3.4.1
+  shimmer: ^3.0.0
+
+  # HTML email rendering
+  flutter_html: ^3.0.0-beta.2
+
+  # Utilities
+  intl: ^0.19.0
+  url_launcher: ^6.3.1
+  timeago: ^3.7.0
+  share_plus: ^10.1.2
+  path_provider: ^2.1.4
+
+  # File handling
+  file_picker: ^8.1.2
+  open_filex: ^4.6.0
+
+  # Icons
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true
+  assets:
+    - assets/images/
