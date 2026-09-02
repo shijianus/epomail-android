@@ -59,7 +59,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = 'Login failed. Please try again.');
+      setState(() => _error = 'Login failed. Please verify credentials.');
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -69,6 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final serverTitle = auth.serverConfig?['title']?.toString() ?? 'EpoCanvas Mail';
+    final currentHost = Uri.tryParse(auth.baseUrl)?.host ?? auth.baseUrl;
     final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
@@ -80,7 +81,7 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                const SizedBox(height: 48),
+                const SizedBox(height: 40),
                 Center(
                   child: Container(
                     width: 80,
@@ -92,19 +93,29 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: const Icon(Icons.mark_email_unread_outlined, size: 40, color: AppTheme.blue),
                   ),
                 ),
-                const SizedBox(height: 22),
+                const SizedBox(height: 20),
                 Text(
                   serverTitle,
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Sign in to your account',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: scheme.onSurface.withOpacity(0.55)),
+                const SizedBox(height: 4),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.cloud_done_outlined, size: 14, color: AppTheme.green),
+                    const SizedBox(width: 6),
+                    Text(
+                      currentHost,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        color: scheme.onSurface.withOpacity(0.6),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 40),
+                const SizedBox(height: 32),
                 if (_error != null) ...[
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -171,14 +182,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         )
                       : const Text('Sign In', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 20),
                 Center(
                   child: TextButton.icon(
-                    onPressed: () => Navigator.of(context).pushReplacement(
+                    onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const ServerScreen()),
                     ),
-                    icon: const Icon(Icons.settings_outlined, size: 16),
-                    label: const Text('Change Server'),
+                    icon: const Icon(Icons.tune_outlined, size: 15),
+                    label: const Text('Custom Server Settings', style: TextStyle(fontSize: 12.5)),
                     style: TextButton.styleFrom(foregroundColor: scheme.onSurface.withOpacity(0.45)),
                   ),
                 ),

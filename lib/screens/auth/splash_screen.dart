@@ -4,7 +4,6 @@ import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/account_provider.dart';
 import '../../theme/app_theme.dart';
-import 'server_screen.dart';
 import 'login_screen.dart';
 import '../home/home_screen.dart';
 
@@ -51,20 +50,12 @@ class _SplashScreenState extends State<SplashScreen>
     if (!mounted) return;
 
     Widget target;
-    switch (auth.state) {
-      case AuthState.needServer:
-        target = const ServerScreen();
-        break;
-      case AuthState.unauthenticated:
-        target = const LoginScreen();
-        break;
-      case AuthState.authenticated:
-        await context.read<AccountProvider>().load();
-        if (mounted) await context.read<AccountProvider>().refreshStats();
-        target = const HomeScreen();
-        break;
-      default:
-        target = const LoginScreen();
+    if (auth.isAuthenticated) {
+      await context.read<AccountProvider>().load();
+      if (mounted) await context.read<AccountProvider>().refreshStats();
+      target = const HomeScreen();
+    } else {
+      target = const LoginScreen();
     }
 
     if (!mounted) return;

@@ -3,18 +3,24 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Centralised HTTP client wrapping Dio.
+/// - Hardcoded default server: https://mail.epocanvas.com
 /// - Auto-injects [Authorization] token from SharedPreferences.
-/// - Auto-prefixes [/api] to the stored base URL.
+/// - Guarantees `/api` prefix on all endpoints with zero URI resolution loss.
 /// - Unwraps the backend's `{ code, data, message }` envelope.
 class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
+  static const String defaultBaseUrl = 'https://mail.epocanvas.com';
+
   final Dio _dio = Dio(BaseOptions(
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 30),
     sendTimeout: const Duration(seconds: 30),
-    headers: {'Content-Type': 'application/json'},
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept': 'application/json',
+    },
   ));
 
   bool _interceptorAdded = false;
@@ -26,27 +32,45 @@ class ApiClient {
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         final prefs = await SharedPreferences.getInstance();
-        final rawUrl = prefs.getString('base_url') ?? '';
         final token = prefs.getString('auth_token') ?? '';
-
-        // Build base URL: strip trailing slash, append /api
-        final cleaned = rawUrl.replaceAll(RegExp(r'/+$'), '');
-        options.baseUrl = '$cleaned/api';
 
         if (token.isNotEmpty) {
           options.headers['Authorization'] = token;
         }
 
         if (kDebugMode) {
-          debugPrint('[API] ${options.method} ${options.baseUrl}${options.path}');
+          debugPrint('[API REQUEST] ${options.method} ${options.path}');
         }
         handler.next(options);
       },
       onError: (error, handler) {
-        debugPrint('[API ERROR] ${error.message}');
+        debugPrint('[API ERROR] ${error.message} on ${error.requestOptions.path}');
         handler.next(error);
       },
     ));
+  }
+
+  /// Builds a guaranteed valid absolute API URL:
+  /// e.g. "https://mail.epocanvas.com/api/setting/websiteConfig"
+  Future<String> _buildFullUrl(String path) async {
+    final prefs = await SharedPreferences.getInstance();
+    var raw = (prefs.getString('base_url') ?? '').trim();
+    if (raw.isEmpty) {
+      raw = defaultBaseUrl;
+      await prefs.setString('base_url', raw);
+    }
+
+    // Strip trailing slashes
+    while (raw.endsWith('/')) {
+      raw = raw.substring(0, raw.length - 1);
+    }
+
+    // Ensure /api prefix
+    final base = raw.endsWith('/api') ? raw : '$raw/api';
+
+    // Strip leading slash on path
+    final cleanPath = path.startsWith('/') ? path.substring(1) : path;
+    return '$base/$cleanPath';
   }
 
   // ─── Typed request helpers ───────────────────────────────────────────────
@@ -56,7 +80,8 @@ class ApiClient {
     required T Function(dynamic data) parse,
   }) async {
     _ensureInterceptors();
-    final res = await _dio.get(path, queryParameters: query);
+    final url = await _buildFullUrl(path);
+    final res = await _dio.get(url, queryParameters: query);
     return _unwrap(res, parse);
   }
 
@@ -65,7 +90,8 @@ class ApiClient {
     required T Function(dynamic data) parse,
   }) async {
     _ensureInterceptors();
-    final res = await _dio.post(path, data: body);
+    final url = await _buildFullUrl(path);
+    final res = await _dio.post(url, data: body);
     return _unwrap(res, parse);
   }
 
@@ -74,7 +100,8 @@ class ApiClient {
     required T Function(dynamic data) parse,
   }) async {
     _ensureInterceptors();
-    final res = await _dio.put(path, data: body);
+    final url = await _buildFullUrl(path);
+    final res = await _dio.put(url, data: body);
     return _unwrap(res, parse);
   }
 
@@ -84,7 +111,8 @@ class ApiClient {
     required T Function(dynamic data) parse,
   }) async {
     _ensureInterceptors();
-    final res = await _dio.delete(path, queryParameters: query, data: body);
+    final url = await _buildFullUrl(path);
+    final res = await _dio.delete(url, queryParameters: query, data: body);
     return _unwrap(res, parse);
   }
 

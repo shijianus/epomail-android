@@ -5,18 +5,18 @@ import '../api/auth_api.dart';
 import '../api/api_client.dart';
 import '../models/user_model.dart';
 
-enum AuthState { loading, needServer, unauthenticated, mfaRequired, authenticated }
+enum AuthState { loading, unauthenticated, mfaRequired, authenticated }
 
 class AuthProvider extends ChangeNotifier {
   AuthState _state = AuthState.loading;
   UserModel? _user;
-  String? _baseUrl;
+  String _baseUrl = ApiClient.defaultBaseUrl;
   String? _tempToken;
   Map<String, dynamic>? _serverConfig;
 
   AuthState get state => _state;
   UserModel? get user => _user;
-  String? get baseUrl => _baseUrl;
+  String get baseUrl => _baseUrl;
   String? get tempToken => _tempToken;
   Map<String, dynamic>? get serverConfig => _serverConfig;
   bool get isAuthenticated => _state == AuthState.authenticated;
@@ -27,12 +27,18 @@ class AuthProvider extends ChangeNotifier {
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _baseUrl = prefs.getString('base_url') ?? '';
+    final savedUrl = prefs.getString('base_url');
+    if (savedUrl == null || savedUrl.trim().isEmpty) {
+      _baseUrl = ApiClient.defaultBaseUrl;
+      await prefs.setString('base_url', _baseUrl);
+    } else {
+      _baseUrl = savedUrl.trim();
+    }
 
-    if (_baseUrl!.isEmpty) {
-      _state = AuthState.needServer;
-      notifyListeners();
-      return;
+    try {
+      _serverConfig = await _api.websiteConfig();
+    } catch (_) {
+      // Server config fetch is non-blocking
     }
 
     final token = prefs.getString('auth_token') ?? '';
@@ -56,7 +62,12 @@ class AuthProvider extends ChangeNotifier {
   // ─── Server setup ────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> connectServer(String url) async {
-    final cleaned = url.trim().replaceAll(RegExp(r'/+$'), '');
+    var cleaned = url.trim();
+    while (cleaned.endsWith('/')) {
+      cleaned = cleaned.substring(0, cleaned.length - 1);
+    }
+    if (cleaned.isEmpty) cleaned = ApiClient.defaultBaseUrl;
+
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('base_url', cleaned);
     _baseUrl = cleaned;
@@ -64,6 +75,7 @@ class AuthProvider extends ChangeNotifier {
 
     final config = await _api.websiteConfig();
     _serverConfig = config;
+    notifyListeners();
     return config;
   }
 
@@ -93,7 +105,9 @@ class AuthProvider extends ChangeNotifier {
   // ─── Logout ──────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
-    try { await _api.logout(); } catch (_) {}
+    try {
+      await _api.logout();
+    } catch (_) {}
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('auth_token');
     _user = null;

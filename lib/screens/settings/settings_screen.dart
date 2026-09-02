@@ -150,7 +150,7 @@ class SettingsScreen extends StatelessWidget {
             child: ListTile(
               leading: const Icon(Icons.cloud_outlined, color: AppTheme.blue),
               title: const Text('Server URL'),
-              subtitle: Text(auth.baseUrl ?? '—'),
+              subtitle: Text(auth.baseUrl.isNotEmpty ? auth.baseUrl : '—'),
               trailing: const Icon(Icons.chevron_right, size: 20),
               onTap: () {
                 Navigator.of(context).push(
