@@ -1,0 +1,72 @@
+name: Build & Publish Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and Release Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.5'
+          channel: 'stable'
+          cache: true
+
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Prepare APK release asset
+        run: |
+          cp build/app/outputs/flutter-apk/app-release.apk epomail.apk
+          sha256sum epomail.apk > epomail.apk.sha256
+
+      - name: Create GitHub Release and Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            epomail.apk
+            epomail.apk.sha256
+          name: "EpoCanvas Mail ${{ github.ref_name }}"
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          body: |
+            ### 📱 EpoCanvas Mail Android Release
+            
+            Native Android email client for [EpoCanvas Mail](https://github.com/shijianus/epocanvas-mail).
+            
+            #### 📦 Download
+            - **`epomail.apk`** (Release APK)
+            
+            #### 🌟 Features
+            - Material Design 3 (Dark / Light / System auto)
+            - 2FA / TOTP Authenticator verification
+            - Full Folder navigation (Inbox, Starred, Sent, Drafts, Spam, Trash, All Mail)
+            - HTML email rendering & inline images
+            - Compose, Reply & Forward with quoted headers
+            - Multi-account switcher & live badge counters
+            - Self-hosted friendly REST API integration
