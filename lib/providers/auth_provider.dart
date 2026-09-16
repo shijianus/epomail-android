@@ -102,6 +102,17 @@ class AuthProvider extends ChangeNotifier {
     await _loadUser();
   }
 
+  // ─── Register ────────────────────────────────────────────────────────────
+
+  /// POST /register — server auto-logs-in by returning a JWT.
+  Future<void> register(String email, String password, {String? regKey}) async {
+    final token = await _api.register(email, password, regKey: regKey);
+    if (token.isNotEmpty) {
+      await _saveToken(token);
+      await _loadUser();
+    }
+  }
+
   // ─── Logout ──────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
@@ -124,8 +135,14 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> changePassword(String oldPwd, String newPwd) =>
-      _api.resetPassword(oldPwd, newPwd);
+  Future<void> changePassword(String newPassword) =>
+      _api.resetPassword(newPassword);
+
+  /// Persist a profile field server-side (themeMode/lang/...) and refresh.
+  Future<void> updateProfile(Map<String, dynamic> data) async {
+    await _api.updateProfile(data);
+    await refreshUser();
+  }
 
   // ─── Private ─────────────────────────────────────────────────────────────
 

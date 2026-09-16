@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -7,8 +10,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// - Auto-injects [Authorization] token from SharedPreferences.
 /// - Guarantees `/api` prefix on all endpoints with zero URI resolution loss.
 /// - Unwraps the backend's `{ code, data, message }` envelope.
+/// - Optional outbound proxy via the `EPO_HTTP_PROXY` env var
+///   (e.g. `127.0.0.1:7897`) — for self-hosted / restricted networks.
 class ApiClient {
-  ApiClient._();
+  ApiClient._() {
+    _applyOptionalProxy();
+  }
   static final ApiClient instance = ApiClient._();
 
   static const String defaultBaseUrl = 'https://mail.epocanvas.com';
@@ -24,6 +31,30 @@ class ApiClient {
   ));
 
   bool _interceptorAdded = false;
+
+  /// Dart's HttpClient ignores OS proxy env vars, so wire an explicit proxy
+  /// when EPO_HTTP_PROXY is present (host:port or http://host:port).
+  void _applyOptionalProxy() {
+    if (kIsWeb) return;
+    final raw = Platform.environment['EPO_HTTP_PROXY']?.trim() ?? '';
+    if (raw.isEmpty) return;
+    final proxy = raw.replaceFirst(RegExp(r'^https?://'), '');
+    try {
+      final adapter = _dio.httpClientAdapter as IOHttpClientAdapter;
+      adapter.createHttpClient = () {
+        final client = HttpClient();
+        client.findProxy = (uri) => 'PROXY $proxy';
+        return client;
+      };
+    } catch (_) {
+      // Adapter type differs on some platforms — proxy stays optional.
+    }
+  }
+
+  /// Test seam: lets contract tests stub the HTTP transport while still
+  /// exercising the real URL builder, token injection and envelope unwrapper.
+  @visibleForTesting
+  Dio get dioForTest => _dio;
 
   void _ensureInterceptors() {
     if (_interceptorAdded) return;
@@ -44,7 +75,8 @@ class ApiClient {
         handler.next(options);
       },
       onError: (error, handler) {
-        debugPrint('[API ERROR] ${error.message} on ${error.requestOptions.path}');
+        debugPrint(
+            '[API ERROR] ${error.message} on ${error.requestOptions.path}');
         handler.next(error);
       },
     ));
@@ -75,7 +107,26 @@ class ApiClient {
 
   // ─── Typed request helpers ───────────────────────────────────────────────
 
-  Future<T> get<T>(String path, {
+  /// Absolute URL for attachment downloads. Keys are served OUTSIDE `/api`
+  /// at `/attachments/<key>` (see mail-worker index.js static routes).
+  Future<String> attachmentUrl(String key) async {
+    final base = await _rawBase();
+    final clean = key.startsWith('/') ? key.substring(1) : key;
+    return '$base/attachments/$clean';
+  }
+
+  Future<String> _rawBase() async {
+    final prefs = await SharedPreferences.getInstance();
+    var raw = (prefs.getString('base_url') ?? '').trim();
+    if (raw.isEmpty) raw = defaultBaseUrl;
+    while (raw.endsWith('/')) {
+      raw = raw.substring(0, raw.length - 1);
+    }
+    return raw;
+  }
+
+  Future<T> get<T>(
+    String path, {
     Map<String, dynamic>? query,
     required T Function(dynamic data) parse,
   }) async {
@@ -85,7 +136,8 @@ class ApiClient {
     return _unwrap(res, parse);
   }
 
-  Future<T> post<T>(String path, {
+  Future<T> post<T>(
+    String path, {
     dynamic body,
     required T Function(dynamic data) parse,
   }) async {
@@ -95,7 +147,8 @@ class ApiClient {
     return _unwrap(res, parse);
   }
 
-  Future<T> put<T>(String path, {
+  Future<T> put<T>(
+    String path, {
     dynamic body,
     required T Function(dynamic data) parse,
   }) async {
@@ -105,7 +158,8 @@ class ApiClient {
     return _unwrap(res, parse);
   }
 
-  Future<T> delete<T>(String path, {
+  Future<T> delete<T>(
+    String path, {
     Map<String, dynamic>? query,
     dynamic body,
     required T Function(dynamic data) parse,

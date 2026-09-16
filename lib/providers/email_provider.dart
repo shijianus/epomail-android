@@ -1,32 +1,109 @@
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../api/email_api.dart';
 import '../models/email_model.dart';
 
-enum MailFolder { inbox, all, sent, drafts, spam, trash, starred }
+/// Folders — mapped to the REAL backend query contract:
+/// inbox  → type=0 (RECEIVE)
+/// sent   → type=1 (SEND)
+/// trash  → folder='trash' (isDel=1)
+/// spam   → folder='spam'  (isSpam=1)
+/// snoozed→ folder='snoozed'
+/// all    → folder='all'   (all received mail, cross-account via allReceive)
+/// starred→ /star/list
+/// drafts → client-local (the web app keeps drafts in localStorage too).
+enum MailFolder { inbox, all, sent, drafts, snoozed, spam, trash, starred }
 
 extension MailFolderExt on MailFolder {
   String get label {
     switch (this) {
-      case MailFolder.inbox: return 'Inbox';
-      case MailFolder.all: return 'All Mail';
-      case MailFolder.sent: return 'Sent';
-      case MailFolder.drafts: return 'Drafts';
-      case MailFolder.spam: return 'Spam';
-      case MailFolder.trash: return 'Trash';
-      case MailFolder.starred: return 'Starred';
+      case MailFolder.inbox:
+        return 'Inbox';
+      case MailFolder.all:
+        return 'All Mail';
+      case MailFolder.sent:
+        return 'Sent';
+      case MailFolder.drafts:
+        return 'Drafts';
+      case MailFolder.snoozed:
+        return 'Snoozed';
+      case MailFolder.spam:
+        return 'Spam';
+      case MailFolder.trash:
+        return 'Trash';
+      case MailFolder.starred:
+        return 'Starred';
     }
   }
 
   int? get apiType {
     switch (this) {
-      case MailFolder.inbox: return 0;
-      case MailFolder.sent: return 1;
-      case MailFolder.drafts: return 2;
-      case MailFolder.trash: return 3;
-      case MailFolder.spam: return 4;
-      default: return null;
+      case MailFolder.inbox:
+        return 0;
+      case MailFolder.sent:
+        return 1;
+      default:
+        return null;
     }
   }
+
+  String? get apiFolder {
+    switch (this) {
+      case MailFolder.trash:
+        return 'trash';
+      case MailFolder.spam:
+        return 'spam';
+      case MailFolder.snoozed:
+        return 'snoozed';
+      case MailFolder.all:
+        return 'all';
+      default:
+        return null;
+    }
+  }
+}
+
+class LocalDraft {
+  final String id;
+  final String accountId;
+  final String accountEmail;
+  final String to;
+  final String subject;
+  final String content;
+  final String updatedAt;
+
+  const LocalDraft({
+    required this.id,
+    required this.accountId,
+    required this.accountEmail,
+    required this.to,
+    required this.subject,
+    required this.content,
+    required this.updatedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'accountId': accountId,
+        'accountEmail': accountEmail,
+        'to': to,
+        'subject': subject,
+        'content': content,
+        'updatedAt': updatedAt,
+      };
+
+  factory LocalDraft.fromJson(Map<String, dynamic> j) => LocalDraft(
+        id: j['id']?.toString() ?? '',
+        accountId: j['accountId']?.toString() ?? '',
+        accountEmail: j['accountEmail']?.toString() ?? '',
+        to: j['to']?.toString() ?? '',
+        subject: j['subject']?.toString() ?? '',
+        content: j['content']?.toString() ?? '',
+        updatedAt: j['updatedAt']?.toString() ?? '',
+      );
 }
 
 class EmailProvider extends ChangeNotifier {
@@ -36,24 +113,31 @@ class EmailProvider extends ChangeNotifier {
   MailFolder _folder = MailFolder.inbox;
   List<EmailModel> _emails = [];
   int _total = 0;
-  int _page = 1;
+  int? _cursor; // keyset pagination cursor (emailId)
   bool _loading = false;
   bool _loadingMore = false;
   bool _hasMore = true;
   String? _keyword;
+  String? _labelFilter; // when set, filter client-side by label
   EmailModel? _selected;
+
+  List<LocalDraft> _drafts = [];
 
   // ─── Getters ─────────────────────────────────────────────────────────────
   MailFolder get folder => _folder;
-  List<EmailModel> get emails => _emails;
+  List<EmailModel> get emails => _labelFilter == null
+      ? _emails
+      : _emails.where((e) => e.labels.contains(_labelFilter)).toList();
   int get total => _total;
   bool get loading => _loading;
   bool get loadingMore => _loadingMore;
   bool get hasMore => _hasMore;
   String? get keyword => _keyword;
+  String? get labelFilter => _labelFilter;
   EmailModel? get selected => _selected;
+  List<LocalDraft> get drafts => _drafts;
 
-  // ─── Load / refresh ──────────────────────────────────────────────────────
+  // ─── Load / refresh (cursor pagination) ──────────────────────────────────
 
   Future<void> load({
     required String accountId,
@@ -62,10 +146,10 @@ class EmailProvider extends ChangeNotifier {
     bool refresh = false,
   }) async {
     if (refresh) {
-      _page = 1;
       _emails = [];
       _hasMore = true;
       _total = 0;
+      _cursor = null;
     }
     if (_loading || (!_hasMore && !refresh)) return;
 
@@ -75,32 +159,48 @@ class EmailProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      EmailListResult result;
-      if (_folder == MailFolder.starred) {
-        final raw = await _api.starList(accountId: accountId, page: _page);
-        result = EmailListResult.fromJson(raw);
+      if (_folder == MailFolder.drafts) {
+        await _loadLocalDrafts();
+        _total = _drafts.length;
+        _hasMore = false;
+      } else if (_folder == MailFolder.starred) {
+        final raw = await _api.starList(
+          cursorEmailId: _cursor?.toString(),
+          keyword: _keyword,
+        );
+        final result = EmailListResult.fromJson(raw);
+        _mergePage(result);
       } else {
         final raw = await _api.list(
           accountId: accountId,
           type: _folder.apiType,
+          folder: _folder.apiFolder,
           allReceive: _folder == MailFolder.all,
           keyword: _keyword,
-          page: _page,
+          cursorEmailId: _cursor,
         );
-        result = EmailListResult.fromJson(raw);
+        final result = EmailListResult.fromJson(raw);
+        _mergePage(result);
       }
-      _emails = [..._emails, ...result.list];
-      _total = result.total;
-      _hasMore = _emails.length < _total;
-      _page++;
     } finally {
       _loading = false;
       notifyListeners();
     }
   }
 
+  void _mergePage(EmailListResult result) {
+    final known = _emails.map((e) => e.emailId).toSet();
+    final fresh = result.list.where((e) => !known.contains(e.emailId)).toList();
+    _emails = [..._emails, ...fresh];
+    _total = result.total;
+    if (_emails.isNotEmpty) {
+      _cursor = int.tryParse(_emails.last.emailId);
+    }
+    _hasMore = _emails.length < _total && fresh.isNotEmpty;
+  }
+
   Future<void> loadMore(String accountId) async {
-    if (_loadingMore || !_hasMore) return;
+    if (_loadingMore || !_hasMore || _loading) return;
     _loadingMore = true;
     notifyListeners();
     try {
@@ -114,62 +214,152 @@ class EmailProvider extends ChangeNotifier {
   Future<void> refresh(String accountId) =>
       load(accountId: accountId, refresh: true);
 
+  void setLabelFilter(String? label) {
+    _labelFilter = (label?.isNotEmpty == true) ? label : null;
+    notifyListeners();
+  }
+
   // ─── Email actions ───────────────────────────────────────────────────────
 
   Future<void> markRead(String emailId) async {
-    await _api.markRead([emailId]);
+    await _api.markRead([emailId], unread: true); // 1 = READ
     _update(emailId, (e) => e.copyWith(isRead: true));
   }
 
-  Future<void> toggleStar(EmailModel email, String accountId) async {
+  Future<void> markUnread(String emailId) async {
+    await _api.markRead([emailId], unread: false); // 0 = UNREAD
+    _update(emailId, (e) => e.copyWith(isRead: false));
+  }
+
+  Future<void> toggleStar(EmailModel email) async {
     if (email.isStar) {
-      await _api.removeStar(email.emailId, accountId);
+      await _api.removeStar(email.emailId);
     } else {
-      await _api.addStar(email.emailId, accountId);
+      await _api.addStar(email.emailId);
     }
     final newStar = !email.isStar;
     _update(email.emailId, (e) => e.copyWith(isStar: newStar));
     if (_selected?.emailId == email.emailId) {
       _selected = _selected!.copyWith(isStar: newStar);
     }
+    notifyListeners();
   }
 
-  Future<void> deleteEmail(String emailId, String accountId) async {
-    await _api.delete(emailIds: [emailId], accountId: accountId, logic: true);
+  /// Move to trash (logic delete, isDel=1).
+  Future<void> deleteEmail(String emailId) async {
+    await _api.delete(emailIds: [emailId], physical: false);
     _remove(emailId);
   }
 
-  Future<void> permanentDelete(String emailId, String accountId) async {
-    await _api.delete(emailIds: [emailId], accountId: accountId, logic: false);
+  /// Physical delete from trash.
+  Future<void> permanentDelete(String emailId) async {
+    await _api.delete(emailIds: [emailId], physical: true);
     _remove(emailId);
   }
 
-  Future<void> markSpam(String emailId, String accountId) async {
-    await _api.markSpam([emailId], accountId);
+  /// PUT /email/spam — plain move in/out of spam folder.
+  Future<void> setSpam(String emailId, bool isSpam) async {
+    await _api.setSpam([emailId], isSpam);
     _remove(emailId);
   }
 
-  Future<void> restore(String emailId, String accountId) async {
-    await _api.restore([emailId], accountId);
+  /// PUT /email/reportSpam — spam + personal blacklist rule for the sender.
+  Future<void> reportSpam(String emailId) async {
+    await _api.reportSpam([emailId]);
     _remove(emailId);
+  }
+
+  /// PUT /email/reportNotSpam — back to inbox + remove blacklist rule.
+  Future<void> reportNotSpam(String emailId) async {
+    await _api.reportNotSpam([emailId]);
+    _remove(emailId);
+  }
+
+  /// PUT /email/restore — trash back to inbox.
+  Future<void> restore(String emailId) async {
+    await _api.restore([emailId]);
+    _remove(emailId);
+  }
+
+  Future<void> snooze(String emailId, String time, String endTime) async {
+    await _api.snooze([emailId], time, endTime);
+    _update(emailId, (e) => e.copyWith(snoozedTime: time));
+  }
+
+  Future<void> unsnooze(String emailId) async {
+    await _api.unsnooze([emailId]);
+    _update(emailId, (e) => e.copyWith(snoozedTime: ''));
+  }
+
+  Future<void> setLabels(String emailId, List<String> labels) async {
+    await _api.setLabels(emailId, labels);
+    _update(emailId, (e) => e.copyWith(labels: labels));
+  }
+
+  Future<TranslateResult> translate(EmailModel email, String targetLang) async {
+    final raw = await _api.translate(
+      text: email.content.isEmpty ? email.previewText : null,
+      html: email.content.isEmpty ? null : email.content,
+      targetLang: targetLang,
+    );
+    return TranslateResult.fromJson(raw);
   }
 
   Future<void> send({
     required String accountId,
-    required List<String> to,
-    List<String> cc = const [],
-    List<String> bcc = const [],
+    String? accountName,
+    required List<String> receiveEmail,
     required String subject,
     required String content,
+    List<Map<String, dynamic>> attachments = const [],
   }) =>
       _api.send(
         accountId: accountId,
-        to: to,
-        cc: cc,
-        bcc: bcc,
+        name: accountName ?? '',
+        receiveEmail: receiveEmail,
         subject: subject,
         content: content,
+        attachments: attachments,
       );
+
+  // ─── Local drafts (web keeps drafts client-side as well) ────────────────
+
+  Future<void> _loadLocalDrafts() async {
+    final prefs = await SharedPreferences.getInstance();
+    final raw = prefs.getString('local_drafts') ?? '[]';
+    try {
+      final list = (jsonDecode(raw) as List<dynamic>)
+          .map((e) => LocalDraft.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+      list.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      _drafts = list;
+    } catch (_) {
+      _drafts = [];
+    }
+  }
+
+  Future<void> saveDraft(LocalDraft draft) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _loadLocalDrafts();
+    final idx = _drafts.indexWhere((d) => d.id == draft.id);
+    if (idx >= 0) {
+      _drafts[idx] = draft;
+    } else {
+      _drafts.insert(0, draft);
+    }
+    await prefs.setString(
+        'local_drafts', jsonEncode(_drafts.map((d) => d.toJson()).toList()));
+    notifyListeners();
+  }
+
+  Future<void> deleteDraft(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _loadLocalDrafts();
+    _drafts.removeWhere((d) => d.id == id);
+    await prefs.setString(
+        'local_drafts', jsonEncode(_drafts.map((d) => d.toJson()).toList()));
+    notifyListeners();
+  }
 
   // ─── Selection ───────────────────────────────────────────────────────────
 
@@ -181,9 +371,10 @@ class EmailProvider extends ChangeNotifier {
   void clear() {
     _emails = [];
     _total = 0;
-    _page = 1;
+    _cursor = null;
     _hasMore = true;
     _keyword = null;
+    _labelFilter = null;
     _selected = null;
     _folder = MailFolder.inbox;
     notifyListeners();
@@ -193,6 +384,9 @@ class EmailProvider extends ChangeNotifier {
 
   void _update(String id, EmailModel Function(EmailModel) fn) {
     _emails = _emails.map((e) => e.emailId == id ? fn(e) : e).toList();
+    if (_selected?.emailId == id) {
+      _selected = fn(_selected!);
+    }
     notifyListeners();
   }
 

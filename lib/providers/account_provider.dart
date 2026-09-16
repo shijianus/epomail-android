@@ -22,12 +22,15 @@ class AccountProvider extends ChangeNotifier {
     notifyListeners();
     try {
       final raw = await _accountApi.list();
-      _accounts = raw.map((e) => AccountModel.fromJson(Map<String, dynamic>.from(e))).toList();
+      _accounts = raw
+          .map((e) => AccountModel.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
 
       if (_current == null && _accounts.isNotEmpty) {
         _current = _accounts.first;
       } else if (_current != null) {
-        final updated = _accounts.where((a) => a.accountId == _current!.accountId);
+        final updated =
+            _accounts.where((a) => a.accountId == _current!.accountId);
         if (updated.isNotEmpty) _current = updated.first;
       }
     } finally {

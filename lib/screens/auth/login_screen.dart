@@ -7,6 +7,7 @@ import '../../api/api_client.dart';
 import '../../theme/app_theme.dart';
 import 'server_screen.dart';
 import 'totp_screen.dart';
+import 'register_screen.dart';
 import '../home/home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -68,7 +69,8 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final serverTitle = auth.serverConfig?['title']?.toString() ?? 'EpoCanvas Mail';
+    final serverTitle =
+        auth.serverConfig?['title']?.toString() ?? 'EpoCanvas Mail';
     final currentHost = Uri.tryParse(auth.baseUrl)?.host ?? auth.baseUrl;
     final scheme = Theme.of(context).colorScheme;
 
@@ -90,20 +92,25 @@ class _LoginScreenState extends State<LoginScreen> {
                       color: AppTheme.blue.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(22),
                     ),
-                    child: const Icon(Icons.mark_email_unread_outlined, size: 40, color: AppTheme.blue),
+                    child: const Icon(Icons.mark_email_unread_outlined,
+                        size: 40, color: AppTheme.blue),
                   ),
                 ),
                 const SizedBox(height: 20),
                 Text(
                   serverTitle,
                   textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context)
+                      .textTheme
+                      .headlineSmall
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.cloud_done_outlined, size: 14, color: AppTheme.green),
+                    const Icon(Icons.cloud_done_outlined,
+                        size: 14, color: AppTheme.green),
                     const SizedBox(width: 6),
                     Text(
                       currentHost,
@@ -127,10 +134,13 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.error_outline, color: AppTheme.red, size: 18),
+                        const Icon(Icons.error_outline,
+                            color: AppTheme.red, size: 18),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text(_error!, style: const TextStyle(color: AppTheme.red, fontSize: 13)),
+                          child: Text(_error!,
+                              style: const TextStyle(
+                                  color: AppTheme.red, fontSize: 13)),
                         ),
                       ],
                     ),
@@ -146,7 +156,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     prefixIcon: Icon(Icons.email_outlined),
                   ),
                   validator: (v) {
-                    if (v == null || v.trim().isEmpty) return 'Email is required';
+                    if (v == null || v.trim().isEmpty)
+                      return 'Email is required';
                     if (!v.contains('@')) return 'Invalid email address';
                     return null;
                   },
@@ -160,7 +171,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     labelText: 'Password',
                     prefixIcon: const Icon(Icons.lock_outline),
                     suffixIcon: IconButton(
-                      icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                      icon: Icon(_obscure
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined),
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                   ),
@@ -178,19 +191,45 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.white),
                         )
-                      : const Text('Sign In', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      : const Text('Sign In',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
-                const SizedBox(height: 20),
+                const SizedBox(height: 16),
+                // Register entry — hidden when the server closes registration
+                // (websiteConfig.register: 0 = open, 1 = closed).
+                if (auth.serverConfig == null ||
+                    (auth.serverConfig!['register'] is num
+                        ? (auth.serverConfig!['register'] as num).toInt() == 0
+                        : true))
+                  Center(
+                    child: TextButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                            builder: (_) => const RegisterScreen()),
+                      ),
+                      icon:
+                          const Icon(Icons.person_add_alt_1_outlined, size: 16),
+                      label: const Text('Create a new account',
+                          style: TextStyle(fontSize: 13)),
+                      style:
+                          TextButton.styleFrom(foregroundColor: AppTheme.blue),
+                    ),
+                  ),
+                const SizedBox(height: 4),
                 Center(
                   child: TextButton.icon(
                     onPressed: () => Navigator.of(context).push(
                       MaterialPageRoute(builder: (_) => const ServerScreen()),
                     ),
                     icon: const Icon(Icons.tune_outlined, size: 15),
-                    label: const Text('Custom Server Settings', style: TextStyle(fontSize: 12.5)),
-                    style: TextButton.styleFrom(foregroundColor: scheme.onSurface.withOpacity(0.45)),
+                    label: const Text('Custom Server Settings',
+                        style: TextStyle(fontSize: 12.5)),
+                    style: TextButton.styleFrom(
+                        foregroundColor: scheme.onSurface.withOpacity(0.45)),
                   ),
                 ),
               ],

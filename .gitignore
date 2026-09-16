@@ -46,3 +46,4 @@ android/key.properties
 *.jks
 *.keystore
 *.apk
+android/build/

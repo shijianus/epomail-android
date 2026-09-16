@@ -87,9 +87,11 @@ class _SplashScreenState extends State<SplashScreen>
                   decoration: BoxDecoration(
                     color: AppTheme.blue.withOpacity(0.18),
                     borderRadius: BorderRadius.circular(28),
-                    border: Border.all(color: AppTheme.blue.withOpacity(0.35), width: 1.5),
+                    border: Border.all(
+                        color: AppTheme.blue.withOpacity(0.35), width: 1.5),
                   ),
-                  child: const Icon(Icons.mark_email_unread_outlined, size: 46, color: AppTheme.blue),
+                  child: const Icon(Icons.mark_email_unread_outlined,
+                      size: 46, color: AppTheme.blue),
                 ),
                 const SizedBox(height: 28),
                 const Text(
@@ -104,7 +106,8 @@ class _SplashScreenState extends State<SplashScreen>
                 const SizedBox(height: 10),
                 Text(
                   'Your private email, everywhere.',
-                  style: TextStyle(fontSize: 14, color: Colors.white.withOpacity(0.42)),
+                  style: TextStyle(
+                      fontSize: 14, color: Colors.white.withOpacity(0.42)),
                 ),
                 const SizedBox(height: 52),
                 SizedBox(
@@ -112,7 +115,8 @@ class _SplashScreenState extends State<SplashScreen>
                   height: 26,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.blue.withOpacity(0.65)),
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                        AppTheme.blue.withOpacity(0.65)),
                   ),
                 ),
               ],

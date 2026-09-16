@@ -94,17 +94,22 @@ class _ServerScreenState extends State<ServerScreen> {
                   color: AppTheme.blue.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(Icons.cloud_outlined, size: 30, color: AppTheme.blue),
+                child: const Icon(Icons.cloud_outlined,
+                    size: 30, color: AppTheme.blue),
               ),
               const SizedBox(height: 20),
               Text(
                 'Server Address',
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context)
+                    .textTheme
+                    .headlineSmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 6),
               Text(
                 'Default server is built-in as https://mail.epocanvas.com',
-                style: TextStyle(color: scheme.onSurface.withOpacity(0.55), fontSize: 13),
+                style: TextStyle(
+                    color: scheme.onSurface.withOpacity(0.55), fontSize: 13),
               ),
               const SizedBox(height: 30),
               TextField(
@@ -128,7 +133,8 @@ class _ServerScreenState extends State<ServerScreen> {
                       ? const SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.white),
                         )
                       : const Text('Test & Save Connection'),
                 ),
@@ -151,7 +157,8 @@ class _ServerScreenState extends State<ServerScreen> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.check_circle_outline, color: AppTheme.green),
+                      const Icon(Icons.check_circle_outline,
+                          color: AppTheme.green),
                       const SizedBox(width: 10),
                       Expanded(
                         child: Column(
@@ -159,11 +166,15 @@ class _ServerScreenState extends State<ServerScreen> {
                           children: [
                             Text(
                               _config!['title']?.toString() ?? 'EpoCanvas Mail',
-                              style: const TextStyle(fontWeight: FontWeight.w700, color: AppTheme.green),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.green),
                             ),
                             Text(
                               'Connected successfully',
-                              style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.55)),
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.onSurface.withOpacity(0.55)),
                             ),
                           ],
                         ),
@@ -180,7 +191,8 @@ class _ServerScreenState extends State<ServerScreen> {
                         Navigator.pop(context);
                       } else {
                         Navigator.of(context).pushReplacement(
-                          MaterialPageRoute(builder: (_) => const LoginScreen()),
+                          MaterialPageRoute(
+                              builder: (_) => const LoginScreen()),
                         );
                       }
                     },

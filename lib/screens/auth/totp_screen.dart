@@ -91,17 +91,25 @@ class _TotpScreenState extends State<TotpScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Icon(Icons.security_outlined, size: 56, color: AppTheme.blue),
+              const Icon(Icons.security_outlined,
+                  size: 56, color: AppTheme.blue),
               const SizedBox(height: 20),
               Text(
                 'Verification Code',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context)
+                    .textTheme
+                    .titleLarge
+                    ?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 8),
               Text(
                 'Enter the 6-digit code from your authenticator app.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.55)),
+                style: TextStyle(
+                    color: Theme.of(context)
+                        .colorScheme
+                        .onSurface
+                        .withOpacity(0.55)),
               ),
               const SizedBox(height: 40),
               Row(
@@ -119,7 +127,8 @@ class _TotpScreenState extends State<TotpScreen> {
                       textAlign: TextAlign.center,
                       maxLength: 1,
                       inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.w700),
                       decoration: const InputDecoration(
                         counterText: '',
                         contentPadding: EdgeInsets.zero,
@@ -141,9 +150,12 @@ class _TotpScreenState extends State<TotpScreen> {
                       ? const SizedBox(
                           width: 22,
                           height: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2.5, color: Colors.white),
                         )
-                      : const Text('Verify', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+                      : const Text('Verify',
+                          style: TextStyle(
+                              fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
               ),
             ],

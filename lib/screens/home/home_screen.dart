@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/email_provider.dart';
+import '../../providers/theme_provider.dart';
 import '../../models/user_model.dart';
 import '../../models/email_model.dart';
 import '../../theme/app_theme.dart';
@@ -30,7 +31,14 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load(refresh: true));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _load(refresh: true);
+      // Server profile is the authority for appearance (parity with web init).
+      final user = context.read<AuthProvider>().user;
+      if (user != null) {
+        context.read<ThemeProvider>().applyServer(user.themeMode);
+      }
+    });
   }
 
   @override
@@ -55,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
           folder: folder,
           refresh: refresh,
         );
+    if (mounted) await context.read<AccountProvider>().refreshStats();
   }
 
   Future<void> _search(String kw) async {
@@ -67,14 +76,18 @@ class _HomeScreenState extends State<HomeScreen> {
         );
   }
 
-  void _openEmail(EmailModel email) async {
+  void _openEmail(EmailModel email) {
     if (!email.isRead) context.read<EmailProvider>().markRead(email.emailId);
-    await Navigator.of(context).push(
+    Navigator.of(context)
+        .push(
       MaterialPageRoute(builder: (_) => DetailScreen(email: email)),
-    );
-    if (mounted) {
-      await context.read<AccountProvider>().refreshStats();
-    }
+    )
+        .then((_) {
+      if (mounted) {
+        context.read<AccountProvider>().refreshStats();
+        _load(refresh: false);
+      }
+    });
   }
 
   @override
@@ -94,6 +107,11 @@ class _HomeScreenState extends State<HomeScreen> {
         onFolder: (f) {
           Navigator.pop(context);
           _load(folder: f, refresh: true);
+        },
+        onLabel: (label) {
+          Navigator.pop(context);
+          context.read<EmailProvider>().setLabelFilter(label);
+          _search('label:"$label"');
         },
         onAccount: (a) {
           accountProv.select(a);
@@ -115,6 +133,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     _searching = false;
                     _searchCtrl.clear();
                   });
+                  context.read<EmailProvider>().setLabelFilter(null);
                   _load(refresh: true);
                 },
               ),
@@ -162,33 +181,33 @@ class _HomeScreenState extends State<HomeScreen> {
         onRefresh: () => _load(refresh: true),
         child: emailProv.loading && emailProv.emails.isEmpty
             ? _buildShimmer()
-            : emailProv.emails.isEmpty
-                ? _buildEmpty()
-                : ListView.builder(
-                    controller: _scroll,
-                    itemCount: emailProv.emails.length + (emailProv.loadingMore ? 1 : 0),
-                    itemBuilder: (ctx, i) {
-                      if (i >= emailProv.emails.length) {
-                        return const Padding(
-                          padding: EdgeInsets.all(16),
-                          child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                        );
-                      }
-                      final email = emailProv.emails[i];
-                      return _EmailRow(
-                        email: email,
-                        onTap: () => _openEmail(email),
-                        onStar: () => emailProv.toggleStar(
-                          email,
-                          accountProv.current?.accountId ?? '',
-                        ),
-                        onDelete: () => emailProv.deleteEmail(
-                          email.emailId,
-                          accountProv.current?.accountId ?? '',
-                        ),
-                      );
-                    },
-                  ),
+            : emailProv.folder == MailFolder.drafts
+                ? _buildDrafts(emailProv)
+                : emailProv.emails.isEmpty
+                    ? _buildEmpty()
+                    : ListView.builder(
+                        controller: _scroll,
+                        itemCount: emailProv.emails.length +
+                            (emailProv.loadingMore ? 1 : 0),
+                        itemBuilder: (ctx, i) {
+                          if (i >= emailProv.emails.length) {
+                            return const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2)),
+                            );
+                          }
+                          final email = emailProv.emails[i];
+                          return _EmailRow(
+                            email: email,
+                            onTap: () => _openEmail(email),
+                            onStar: () => emailProv.toggleStar(email),
+                            onDelete: () =>
+                                emailProv.deleteEmail(email.emailId),
+                          );
+                        },
+                      ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => Navigator.of(context).push(
@@ -207,6 +226,46 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// Drafts are client-local (web parity) — rendered from LocalDraft store.
+  Widget _buildDrafts(EmailProvider prov) {
+    if (prov.drafts.isEmpty) return _buildEmpty();
+    return ListView.builder(
+      itemCount: prov.drafts.length,
+      itemBuilder: (ctx, i) {
+        final d = prov.drafts[i];
+        return ListTile(
+          leading: const Icon(Icons.drafts_outlined, color: AppTheme.blue),
+          title: Text(
+            d.subject.isEmpty ? '(No Subject)' : d.subject,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+          ),
+          subtitle: Text(
+            'To: ${d.to.isEmpty ? '—' : d.to}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 12.5),
+          ),
+          trailing: IconButton(
+            icon: const Icon(Icons.delete_outline, size: 20),
+            onPressed: () => prov.deleteDraft(d.id),
+          ),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => ComposeScreen(
+                draftId: d.id,
+                to: [d.to],
+                subject: d.subject,
+                initialBody: d.content,
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildEmpty() {
     return Center(
       child: Column(
@@ -220,7 +279,9 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(height: 16),
           Text(
             'No emails here',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurface.withOpacity(0.4)),
+            style: TextStyle(
+                color:
+                    Theme.of(context).colorScheme.onSurface.withOpacity(0.4)),
           ),
         ],
       ),
@@ -260,7 +321,8 @@ class _EmailRow extends StatelessWidget {
         icon: email.isStar ? Icons.star_border : Icons.star_outline,
         alignment: Alignment.centerRight,
       ),
-      onDismissed: (dir) => dir == DismissDirection.startToEnd ? onDelete() : onStar(),
+      onDismissed: (dir) =>
+          dir == DismissDirection.startToEnd ? onDelete() : onStar(),
       confirmDismiss: (_) async => true,
       child: InkWell(
         onTap: onTap,
@@ -272,7 +334,11 @@ class _EmailRow extends StatelessWidget {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: LetterAvatar(name: email.senderLabel, seed: email.from, size: 42),
+                child: LetterAvatar(
+                  name: email.correspondentLabel,
+                  seed: email.correspondentAddress,
+                  size: 42,
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -282,14 +348,30 @@ class _EmailRow extends StatelessWidget {
                     Row(
                       children: [
                         Expanded(
-                          child: Text(
-                            email.senderLabel,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontWeight: email.isRead ? FontWeight.w400 : FontWeight.w700,
-                              fontSize: 14,
-                            ),
+                          child: Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  email.correspondentLabel,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontWeight: email.isRead
+                                        ? FontWeight.w400
+                                        : FontWeight.w700,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                              if (email.isOfficial) ...[
+                                const SizedBox(width: 4),
+                                Tooltip(
+                                  message: 'Official verified',
+                                  child: Icon(Icons.verified_rounded,
+                                      size: 14, color: AppTheme.blue),
+                                ),
+                              ],
+                            ],
                           ),
                         ),
                         Text(
@@ -297,9 +379,14 @@ class _EmailRow extends StatelessWidget {
                           style: TextStyle(
                             fontSize: 11.5,
                             color: email.isRead
-                                ? Theme.of(context).colorScheme.onSurface.withOpacity(0.42)
+                                ? Theme.of(context)
+                                    .colorScheme
+                                    .onSurface
+                                    .withOpacity(0.42)
                                 : AppTheme.blue,
-                            fontWeight: email.isRead ? FontWeight.normal : FontWeight.w600,
+                            fontWeight: email.isRead
+                                ? FontWeight.normal
+                                : FontWeight.w600,
                           ),
                         ),
                       ],
@@ -309,26 +396,33 @@ class _EmailRow extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            email.subject.isEmpty ? '(No Subject)' : email.subject,
+                            email.subject.isEmpty
+                                ? '(No Subject)'
+                                : email.subject,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 13.5,
-                              fontWeight: email.isRead ? FontWeight.normal : FontWeight.w600,
+                              fontWeight: email.isRead
+                                  ? FontWeight.normal
+                                  : FontWeight.w600,
                             ),
                           ),
                         ),
                         if (email.isStar)
-                          const Icon(Icons.star_rounded, size: 13, color: AppTheme.amber),
+                          const Icon(Icons.star_rounded,
+                              size: 13, color: AppTheme.amber),
                         if (email.hasCode)
                           const Padding(
                             padding: EdgeInsets.only(left: 4),
-                            child: Icon(Icons.key_outlined, size: 13, color: AppTheme.blue),
+                            child: Icon(Icons.key_outlined,
+                                size: 13, color: AppTheme.blue),
                           ),
                         if (email.hasAttachments)
                           const Padding(
                             padding: EdgeInsets.only(left: 3),
-                            child: Icon(Icons.attach_file, size: 13, color: AppTheme.blue),
+                            child: Icon(Icons.attach_file,
+                                size: 13, color: AppTheme.blue),
                           ),
                       ],
                     ),
@@ -339,7 +433,10 @@ class _EmailRow extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         fontSize: 12.5,
-                        color: Theme.of(context).colorScheme.onSurface.withOpacity(0.45),
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurface
+                            .withOpacity(0.45),
                       ),
                     ),
                   ],
@@ -351,7 +448,8 @@ class _EmailRow extends StatelessWidget {
                   width: 8,
                   height: 8,
                   margin: const EdgeInsets.only(top: 5),
-                  decoration: const BoxDecoration(color: AppTheme.blue, shape: BoxShape.circle),
+                  decoration: const BoxDecoration(
+                      color: AppTheme.blue, shape: BoxShape.circle),
                 ),
               ],
             ],
@@ -366,7 +464,8 @@ class _SwipeBg extends StatelessWidget {
   final Color color;
   final IconData icon;
   final Alignment alignment;
-  const _SwipeBg({required this.color, required this.icon, required this.alignment});
+  const _SwipeBg(
+      {required this.color, required this.icon, required this.alignment});
   @override
   Widget build(BuildContext context) => Container(
         color: color,
@@ -385,7 +484,10 @@ class _ShimmerRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
-          Container(width: 42, height: 42, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -412,6 +514,7 @@ class _Drawer extends StatelessWidget {
   final SidebarStats stats;
   final MailFolder activeFolder;
   final void Function(MailFolder) onFolder;
+  final void Function(String) onLabel;
   final void Function(AccountModel) onAccount;
   final VoidCallback onSettings;
 
@@ -422,6 +525,7 @@ class _Drawer extends StatelessWidget {
     required this.stats,
     required this.activeFolder,
     required this.onFolder,
+    required this.onLabel,
     required this.onAccount,
     required this.onSettings,
   });
@@ -429,6 +533,8 @@ class _Drawer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final labels = user?.customLabels ?? const <CustomLabel>[];
+
     return Drawer(
       child: SafeArea(
         child: Column(
@@ -438,7 +544,10 @@ class _Drawer extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
               child: Row(
                 children: [
-                  LetterAvatar(name: user?.displayName ?? '?', seed: user?.email ?? '', size: 42),
+                  LetterAvatar(
+                      name: user?.displayName ?? '?',
+                      seed: user?.email ?? '',
+                      size: 42),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
@@ -446,20 +555,25 @@ class _Drawer extends StatelessWidget {
                       children: [
                         Text(
                           user?.displayName ?? '—',
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.w700, fontSize: 15),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                         Text(
                           user?.email ?? '',
-                          style: TextStyle(fontSize: 12, color: scheme.onSurface.withOpacity(0.5)),
+                          style: TextStyle(
+                              fontSize: 12,
+                              color: scheme.onSurface.withOpacity(0.5)),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
-                  IconButton(icon: const Icon(Icons.settings_outlined, size: 22), onPressed: onSettings),
+                  IconButton(
+                      icon: const Icon(Icons.settings_outlined, size: 22),
+                      onPressed: onSettings),
                 ],
               ),
             ),
@@ -469,18 +583,22 @@ class _Drawer extends StatelessWidget {
               ExpansionTile(
                 leading: const Icon(Icons.swap_horiz_outlined, size: 20),
                 title: Text(current?.email ?? 'Select',
-                    style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+                    style: const TextStyle(fontSize: 13),
+                    overflow: TextOverflow.ellipsis),
                 tilePadding: const EdgeInsets.symmetric(horizontal: 16),
                 children: accounts
                     .map((a) => ListTile(
                           dense: true,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 24),
-                          leading: LetterAvatar(name: a.displayLabel, seed: a.email, size: 28),
-                          title: Text(a.email, style: const TextStyle(fontSize: 13), overflow: TextOverflow.ellipsis),
+                          contentPadding:
+                              const EdgeInsets.symmetric(horizontal: 24),
+                          leading: LetterAvatar(
+                              name: a.displayLabel, seed: a.email, size: 28),
+                          title: Text(a.email,
+                              style: const TextStyle(fontSize: 13),
+                              overflow: TextOverflow.ellipsis),
                           selected: a.accountId == current?.accountId,
                           selectedColor: AppTheme.blue,
                           onTap: () => onAccount(a),
-                          trailing: a.unreadCount > 0 ? _Badge(a.unreadCount) : null,
                         ))
                     .toList(),
               ),
@@ -493,14 +611,13 @@ class _Drawer extends StatelessWidget {
                   _FolderTile(
                     icon: Icons.inbox_outlined,
                     label: 'Inbox',
-                    badge: stats.inbox,
+                    badge: stats.inboxUnread,
                     active: activeFolder == MailFolder.inbox,
                     onTap: () => onFolder(MailFolder.inbox),
                   ),
                   _FolderTile(
                     icon: Icons.star_outline_rounded,
                     label: 'Starred',
-                    badge: stats.star,
                     active: activeFolder == MailFolder.starred,
                     onTap: () => onFolder(MailFolder.starred),
                   ),
@@ -513,9 +630,15 @@ class _Drawer extends StatelessWidget {
                   _FolderTile(
                     icon: Icons.drafts_outlined,
                     label: 'Drafts',
-                    badge: stats.draft,
                     active: activeFolder == MailFolder.drafts,
                     onTap: () => onFolder(MailFolder.drafts),
+                  ),
+                  _FolderTile(
+                    icon: Icons.alarm_outlined,
+                    label: 'Snoozed',
+                    badge: stats.snoozedUrgent + stats.snoozedWaiting,
+                    active: activeFolder == MailFolder.snoozed,
+                    onTap: () => onFolder(MailFolder.snoozed),
                   ),
                   _FolderTile(
                     icon: Icons.all_inbox_outlined,
@@ -527,7 +650,7 @@ class _Drawer extends StatelessWidget {
                   _FolderTile(
                     icon: Icons.report_gmailerrorred_outlined,
                     label: 'Spam',
-                    badge: stats.spam,
+                    badge: stats.spamUnread,
                     active: activeFolder == MailFolder.spam,
                     onTap: () => onFolder(MailFolder.spam),
                   ),
@@ -537,12 +660,67 @@ class _Drawer extends StatelessWidget {
                     active: activeFolder == MailFolder.trash,
                     onTap: () => onFolder(MailFolder.trash),
                   ),
+                  if (labels.isNotEmpty) ...[
+                    const Divider(height: 8, indent: 16, endIndent: 16),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                      child: Text(
+                        'LABELS',
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 1.1,
+                          color: scheme.onSurface.withOpacity(0.45),
+                        ),
+                      ),
+                    ),
+                    ...labels.map((l) => _LabelTile(
+                          label: l,
+                          badge: stats.labelUnread[l.name] ?? 0,
+                          onTap: () => onLabel(l.name),
+                        )),
+                  ],
                 ],
               ),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+Color _labelColor(String hex) {
+  final v = hex.replaceFirst('#', '');
+  if (v.length != 6) return AppTheme.blue;
+  final value = int.tryParse(v, radix: 16);
+  return value == null ? AppTheme.blue : Color(0xFF000000 | value);
+}
+
+class _LabelTile extends StatelessWidget {
+  final CustomLabel label;
+  final int badge;
+  final VoidCallback onTap;
+  const _LabelTile({required this.label, this.badge = 0, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final active = context.watch<EmailProvider>().labelFilter == label.name;
+    return ListTile(
+      dense: true,
+      leading:
+          Icon(Icons.label_outline, color: _labelColor(label.color), size: 20),
+      title: Text(
+        label.name,
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: active ? FontWeight.w700 : FontWeight.normal,
+          color: active ? AppTheme.blue : null,
+        ),
+      ),
+      trailing: badge > 0 ? _Badge(badge) : null,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      onTap: onTap,
     );
   }
 }
@@ -564,7 +742,9 @@ class _FolderTile extends StatelessWidget {
   Widget build(BuildContext context) => ListTile(
         leading: Icon(
           icon,
-          color: active ? AppTheme.blue : Theme.of(context).colorScheme.onSurface.withOpacity(0.65),
+          color: active
+              ? AppTheme.blue
+              : Theme.of(context).colorScheme.onSurface.withOpacity(0.65),
           size: 22,
         ),
         title: Text(
@@ -590,10 +770,12 @@ class _Badge extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-        decoration: BoxDecoration(color: AppTheme.blue, borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+            color: AppTheme.blue, borderRadius: BorderRadius.circular(10)),
         child: Text(
           count > 99 ? '99+' : '$count',
-          style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+          style: const TextStyle(
+              color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
         ),
       );
 }

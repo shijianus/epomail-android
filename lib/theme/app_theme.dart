@@ -61,14 +61,18 @@ class AppTheme {
     required Color secondaryText,
   }) {
     final isDark = brightness == Brightness.dark;
-    final base = isDark ? ThemeData.dark(useMaterial3: true) : ThemeData.light(useMaterial3: true);
+    final base = isDark
+        ? ThemeData.dark(useMaterial3: true)
+        : ThemeData.light(useMaterial3: true);
 
     final textTheme = GoogleFonts.outfitTextTheme(base.textTheme).copyWith(
       bodyLarge: GoogleFonts.outfit(color: onSurface, fontSize: 15),
       bodyMedium: GoogleFonts.outfit(color: onSurface, fontSize: 14),
       bodySmall: GoogleFonts.outfit(color: secondaryText, fontSize: 12),
-      titleMedium: GoogleFonts.outfit(color: onSurface, fontWeight: FontWeight.w600),
-      labelLarge: GoogleFonts.outfit(color: onSurface, fontSize: 14, fontWeight: FontWeight.w500),
+      titleMedium:
+          GoogleFonts.outfit(color: onSurface, fontWeight: FontWeight.w600),
+      labelLarge: GoogleFonts.outfit(
+          color: onSurface, fontSize: 14, fontWeight: FontWeight.w500),
     );
 
     return base.copyWith(
@@ -106,7 +110,7 @@ class AppTheme {
         surfaceTintColor: Colors.transparent,
         elevation: 2,
       ),
-      cardTheme: CardTheme(
+      cardTheme: CardThemeData(
         color: bgSurface,
         elevation: 0,
         margin: EdgeInsets.zero,
@@ -119,7 +123,8 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: bgElevated,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(10),
           borderSide: BorderSide(color: border),
@@ -145,16 +150,20 @@ class AppTheme {
           foregroundColor: Colors.white,
           elevation: 0,
           minimumSize: const Size.fromHeight(48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          textStyle: GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.w600),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          textStyle:
+              GoogleFonts.outfit(fontSize: 15, fontWeight: FontWeight.w600),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
           foregroundColor: primary,
           side: BorderSide(color: border),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-          textStyle: GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.w500),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          textStyle:
+              GoogleFonts.outfit(fontSize: 14, fontWeight: FontWeight.w500),
         ),
       ),
       textButtonTheme: TextButtonThemeData(

@@ -1,3 +1,7 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,16 +11,25 @@ import '../../api/api_client.dart';
 import '../../theme/app_theme.dart';
 
 class ComposeScreen extends StatefulWidget {
+  /// 'reply' | 'forward' | '' — passed through to POST /email/send.
+  final String sendType;
+  final String? replyEmailId;
+  final String? draftId;
   final List<String>? to;
   final String? subject;
+  final String? initialBody;
   final String? quotedHtml;
   final String? quotedSender;
   final String? quotedTime;
 
   const ComposeScreen({
     super.key,
+    this.sendType = '',
+    this.replyEmailId,
+    this.draftId,
     this.to,
     this.subject,
+    this.initialBody,
     this.quotedHtml,
     this.quotedSender,
     this.quotedTime,
@@ -28,35 +41,37 @@ class ComposeScreen extends StatefulWidget {
 
 class _ComposeScreenState extends State<ComposeScreen> {
   final _toCtrl = TextEditingController();
-  final _ccCtrl = TextEditingController();
-  final _bccCtrl = TextEditingController();
   final _subjectCtrl = TextEditingController();
   final _bodyCtrl = TextEditingController();
 
-  bool _showCcBcc = false;
   bool _sending = false;
   String? _error;
+  String? _draftId;
+  final List<PlatformFile> _attachments = [];
 
   @override
   void initState() {
     super.initState();
+    _draftId = widget.draftId;
     if (widget.to != null && widget.to!.isNotEmpty) {
       _toCtrl.text = widget.to!.join(', ');
     }
     if (widget.subject != null) {
       _subjectCtrl.text = widget.subject!;
     }
+    if (widget.initialBody != null && widget.initialBody!.isNotEmpty) {
+      _bodyCtrl.text = widget.initialBody!;
+    }
     if (widget.quotedHtml != null && widget.quotedHtml!.isNotEmpty) {
       final cleanQuote = _stripHtml(widget.quotedHtml!);
-      _bodyCtrl.text = '\n\n--- On ${widget.quotedTime ?? "earlier"}, ${widget.quotedSender ?? "Sender"} wrote ---\n$cleanQuote';
+      _bodyCtrl.text =
+          '\n\n--- On ${widget.quotedTime ?? "earlier"}, ${widget.quotedSender ?? "Sender"} wrote ---\n$cleanQuote';
     }
   }
 
   @override
   void dispose() {
     _toCtrl.dispose();
-    _ccCtrl.dispose();
-    _bccCtrl.dispose();
     _subjectCtrl.dispose();
     _bodyCtrl.dispose();
     super.dispose();
@@ -75,6 +90,50 @@ class _ComposeScreenState extends State<ComposeScreen> {
         .map((e) => e.trim())
         .where((e) => e.isNotEmpty && e.contains('@'))
         .toList();
+  }
+
+  Future<void> _pickAttachments() async {
+    final res = await FilePicker.platform.pickFiles(allowMultiple: true);
+    if (res != null && mounted) {
+      setState(() => _attachments.addAll(res.files));
+    }
+  }
+
+  /// Body → minimal HTML with quoted-reply styling (parity with web compose).
+  String _buildHtml(String body) {
+    final escaped = body
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;');
+    final lines = escaped.split('\n');
+    final buf = StringBuffer();
+    var inQuote = false;
+    for (final line in lines) {
+      final isQuoteLine = line.trimLeft().startsWith('--- On ') ||
+          line.trimLeft().startsWith('&gt;');
+      if (isQuoteLine && !inQuote) {
+        buf.write('<blockquote class="gmail_quote" style="margin:0 0 0 '
+            '0.8ex;border-left:1px solid #ccc;padding-left:1ex">');
+        inQuote = true;
+      }
+      buf.write(line.isEmpty ? '<br>' : '$line<br>');
+    }
+    if (inQuote) buf.write('</blockquote>');
+    return '<div dir="ltr">$buf</div>';
+  }
+
+  List<Map<String, dynamic>> _attachmentPayload() {
+    return _attachments.where((f) => f.path != null).map((f) {
+      final bytes = File(f.path!).readAsBytesSync();
+      return {
+        'content': base64Encode(bytes),
+        'filename': f.name,
+        'size': bytes.length,
+        'contentType': f.name.toLowerCase().endsWith('.pdf')
+            ? 'application/pdf'
+            : 'application/octet-stream',
+      };
+    }).toList();
   }
 
   Future<void> _send() async {
@@ -96,14 +155,22 @@ class _ComposeScreenState extends State<ComposeScreen> {
     });
 
     try {
+      final body = _bodyCtrl.text.trim();
       await context.read<EmailProvider>().send(
             accountId: account.accountId,
-            to: toList,
-            cc: _parseEmails(_ccCtrl.text),
-            bcc: _parseEmails(_bccCtrl.text),
-            subject: _subjectCtrl.text.trim().isEmpty ? '(No Subject)' : _subjectCtrl.text.trim(),
-            content: _bodyCtrl.text.trim(),
+            accountName: account.name,
+            receiveEmail: toList,
+            subject: _subjectCtrl.text.trim().isEmpty
+                ? '(No Subject)'
+                : _subjectCtrl.text.trim(),
+            content: _buildHtml(body.isEmpty ? '(No content)' : body),
+            attachments: _attachmentPayload(),
           );
+
+      // Remove the local draft if this send originated from one.
+      if (_draftId != null) {
+        await context.read<EmailProvider>().deleteDraft(_draftId!);
+      }
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -122,28 +189,58 @@ class _ComposeScreenState extends State<ComposeScreen> {
     }
   }
 
+  Future<void> _saveDraft() async {
+    final account = context.read<AccountProvider>().current;
+    if (account == null) return;
+    final draft = LocalDraft(
+      id: _draftId ?? DateTime.now().microsecondsSinceEpoch.toString(),
+      accountId: account.accountId,
+      accountEmail: account.email,
+      to: _toCtrl.text.trim(),
+      subject: _subjectCtrl.text.trim(),
+      content: _bodyCtrl.text,
+      updatedAt: DateTime.now().toIso8601String(),
+    );
+    _draftId = draft.id;
+    await context.read<EmailProvider>().saveDraft(draft);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Draft saved locally'), backgroundColor: AppTheme.blue));
+  }
+
   Future<bool> _confirmDiscard() async {
-    if (_toCtrl.text.isEmpty && _subjectCtrl.text.isEmpty && _bodyCtrl.text.isEmpty) {
+    if (_toCtrl.text.isEmpty &&
+        _subjectCtrl.text.isEmpty &&
+        _bodyCtrl.text.isEmpty) {
       return true;
     }
-    final discard = await showDialog<bool>(
+    final action = await showDialog<String>(
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Discard Draft?'),
         content: const Text('Your message has unsaved changes.'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            onPressed: () => Navigator.pop(context, 'keep'),
             child: const Text('Keep Editing'),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context, true),
+            onPressed: () => Navigator.pop(context, 'draft'),
+            child: const Text('Save Draft',
+                style: TextStyle(color: AppTheme.blue)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, 'discard'),
             child: const Text('Discard', style: TextStyle(color: AppTheme.red)),
           ),
         ],
       ),
     );
-    return discard ?? false;
+    if (action == 'draft') {
+      await _saveDraft();
+      return true;
+    }
+    return action == 'discard';
   }
 
   @override
@@ -163,15 +260,25 @@ class _ComposeScreenState extends State<ComposeScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Compose'),
+          title: Text(widget.sendType == 'reply'
+              ? 'Reply'
+              : widget.sendType == 'forward'
+                  ? 'Forward'
+                  : 'Compose'),
           actions: [
+            IconButton(
+              tooltip: 'Save draft',
+              icon: const Icon(Icons.save_outlined, size: 20),
+              onPressed: _saveDraft,
+            ),
             TextButton.icon(
               onPressed: _sending ? null : _send,
               icon: _sending
                   ? const SizedBox(
                       width: 16,
                       height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.blue),
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: AppTheme.blue),
                     )
                   : const Icon(Icons.send_rounded, size: 18),
               label: const Text('Send'),
@@ -183,14 +290,18 @@ class _ComposeScreenState extends State<ComposeScreen> {
             if (_error != null)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 color: AppTheme.red.withOpacity(0.1),
                 child: Row(
                   children: [
-                    const Icon(Icons.error_outline, size: 16, color: AppTheme.red),
+                    const Icon(Icons.error_outline,
+                        size: 16, color: AppTheme.red),
                     const SizedBox(width: 8),
                     Expanded(
-                      child: Text(_error!, style: const TextStyle(color: AppTheme.red, fontSize: 13)),
+                      child: Text(_error!,
+                          style: const TextStyle(
+                              color: AppTheme.red, fontSize: 13)),
                     ),
                   ],
                 ),
@@ -201,19 +312,30 @@ class _ComposeScreenState extends State<ComposeScreen> {
                   children: [
                     // From Row
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 12),
                       decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: scheme.outline)),
+                        border:
+                            Border(bottom: BorderSide(color: scheme.outline)),
                       ),
                       child: Row(
                         children: [
-                          Text('From', style: TextStyle(color: scheme.onSurface.withOpacity(0.5), fontSize: 13)),
+                          Text('From',
+                              style: TextStyle(
+                                  color: scheme.onSurface.withOpacity(0.5),
+                                  fontSize: 13)),
                           const SizedBox(width: 16),
                           Expanded(
                             child: Text(
                               account?.displayLabel ?? '—',
-                              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w600, fontSize: 14),
                             ),
+                          ),
+                          IconButton(
+                            tooltip: 'Attach files',
+                            icon: const Icon(Icons.attach_file, size: 20),
+                            onPressed: _pickAttachments,
                           ),
                         ],
                       ),
@@ -222,11 +344,15 @@ class _ComposeScreenState extends State<ComposeScreen> {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: scheme.outline)),
+                        border:
+                            Border(bottom: BorderSide(color: scheme.outline)),
                       ),
                       child: Row(
                         children: [
-                          Text('To', style: TextStyle(color: scheme.onSurface.withOpacity(0.5), fontSize: 13)),
+                          Text('To',
+                              style: TextStyle(
+                                  color: scheme.onSurface.withOpacity(0.5),
+                                  fontSize: 13)),
                           const SizedBox(width: 16),
                           Expanded(
                             child: TextField(
@@ -238,80 +364,27 @@ class _ComposeScreenState extends State<ComposeScreen> {
                                 enabledBorder: InputBorder.none,
                                 focusedBorder: InputBorder.none,
                                 filled: false,
-                                contentPadding: EdgeInsets.symmetric(vertical: 12),
+                                contentPadding:
+                                    EdgeInsets.symmetric(vertical: 12),
                               ),
                             ),
-                          ),
-                          IconButton(
-                            icon: Icon(_showCcBcc ? Icons.expand_less : Icons.expand_more, size: 20),
-                            onPressed: () => setState(() => _showCcBcc = !_showCcBcc),
                           ),
                         ],
                       ),
                     ),
-                    if (_showCcBcc) ...[
-                      // CC Row
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          border: Border(bottom: BorderSide(color: scheme.outline)),
-                        ),
-                        child: Row(
-                          children: [
-                            Text('Cc', style: TextStyle(color: scheme.onSurface.withOpacity(0.5), fontSize: 13)),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: TextField(
-                                controller: _ccCtrl,
-                                keyboardType: TextInputType.emailAddress,
-                                decoration: const InputDecoration(
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  filled: false,
-                                  contentPadding: EdgeInsets.symmetric(vertical: 12),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      // BCC Row
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16),
-                        decoration: BoxDecoration(
-                          border: Border(bottom: BorderSide(color: scheme.outline)),
-                        ),
-                        child: Row(
-                          children: [
-                            Text('Bcc', style: TextStyle(color: scheme.onSurface.withOpacity(0.5), fontSize: 13)),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: TextField(
-                                controller: _bccCtrl,
-                                keyboardType: TextInputType.emailAddress,
-                                decoration: const InputDecoration(
-                                  border: InputBorder.none,
-                                  enabledBorder: InputBorder.none,
-                                  focusedBorder: InputBorder.none,
-                                  filled: false,
-                                  contentPadding: EdgeInsets.symmetric(vertical: 12),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
                     // Subject Row
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16),
                       decoration: BoxDecoration(
-                        border: Border(bottom: BorderSide(color: scheme.outline)),
+                        border:
+                            Border(bottom: BorderSide(color: scheme.outline)),
                       ),
                       child: Row(
                         children: [
-                          Text('Subject', style: TextStyle(color: scheme.onSurface.withOpacity(0.5), fontSize: 13)),
+                          Text('Subject',
+                              style: TextStyle(
+                                  color: scheme.onSurface.withOpacity(0.5),
+                                  fontSize: 13)),
                           const SizedBox(width: 16),
                           Expanded(
                             child: TextField(
@@ -322,13 +395,36 @@ class _ComposeScreenState extends State<ComposeScreen> {
                                 enabledBorder: InputBorder.none,
                                 focusedBorder: InputBorder.none,
                                 filled: false,
-                                contentPadding: EdgeInsets.symmetric(vertical: 12),
+                                contentPadding:
+                                    EdgeInsets.symmetric(vertical: 12),
                               ),
                             ),
                           ),
                         ],
                       ),
                     ),
+                    // Attachments preview
+                    if (_attachments.isNotEmpty)
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: _attachments
+                              .map((f) => Chip(
+                                    avatar: const Icon(
+                                        Icons.insert_drive_file_outlined,
+                                        size: 16,
+                                        color: AppTheme.blue),
+                                    label: Text(f.name,
+                                        style: const TextStyle(fontSize: 12)),
+                                    onDeleted: () =>
+                                        setState(() => _attachments.remove(f)),
+                                  ))
+                              .toList(),
+                        ),
+                      ),
                     // Body Area
                     Padding(
                       padding: const EdgeInsets.all(16),

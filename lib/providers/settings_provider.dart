@@ -5,7 +5,9 @@ class SettingsProvider extends ChangeNotifier {
   int _refreshInterval = 30; // seconds, 0 = manual only
   int get refreshInterval => _refreshInterval;
 
-  SettingsProvider() { _load(); }
+  SettingsProvider() {
+    _load();
+  }
 
   Future<void> _load() async {
     final p = await SharedPreferences.getInstance();
