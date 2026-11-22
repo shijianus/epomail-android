@@ -26,8 +26,8 @@ void main() {
         'https://',
         'javascript:alert(1)',
       ]) {
-        expect(() => ApiClient.normalizeBaseUrl(bad),
-            throwsA(isA<ApiException>()),
+        expect(
+            () => ApiClient.normalizeBaseUrl(bad), throwsA(isA<ApiException>()),
             reason: bad);
       }
     });
@@ -87,6 +87,27 @@ void main() {
       ]) {
         expect(EmailHtml.safeLink(bad), isNull, reason: '$bad');
       }
+    });
+
+    test('quoted text cannot hide a remote image', () {
+      for (final html in [
+        '''<img alt="a src='cid:x" src='https://t.example.com/p'>''',
+        '''<img alt="x>" src="https://t.example.com/p">''',
+        '''<img alt='" src="cid:x' src="https://t.example.com/p">''',
+        '''<img title=">" alt=src=cid:x src=https://t.example.com/p>''',
+        '''<img/src="https://t.example.com/p"/>''',
+        '''<img src = "https://t.example.com/p''',
+        '''<img alt="<img src='cid:x'>" src="https://t.example.com/p">''',
+      ]) {
+        expect(EmailHtml.hasRemoteImages(html), isTrue, reason: html);
+        final out = EmailHtml.blockRemoteImages(html);
+        expect(EmailHtml.hasRemoteImages(out), isFalse, reason: out);
+        expect(RegExp(r'''[\s/]src\s*=\s*["']?https''').hasMatch(out), isFalse,
+            reason: out);
+      }
+      const inline = '''<img alt="src='https://x'" src="cid:logo"><p>t</p>''';
+      expect(EmailHtml.hasRemoteImages(inline), isFalse);
+      expect(EmailHtml.blockRemoteImages(inline), inline);
     });
 
     test('remote images are blocked, inline ones kept', () {
