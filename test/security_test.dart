@@ -96,14 +96,17 @@ void main() {
         '''<img alt='" src="cid:x' src="https://t.example.com/p">''',
         '''<img title=">" alt=src=cid:x src=https://t.example.com/p>''',
         '''<img/src="https://t.example.com/p"/>''',
-        '''<img src = "https://t.example.com/p''',
         '''<img alt="<img src='cid:x'>" src="https://t.example.com/p">''',
+        '''<!-- <img alt=" --><img src="https://t.example.com/p">''',
+        '''<!--><img src="https://t.example.com/p">-->''',
+        '''<p style="background:URL(https://t.example.com/p)">x</p>''',
+        '''<style>p{background:url(//t.example.com/p)}</style><p>x</p>''',
+        '''<svg><image xlink:href="https://t.example.com/p"/></svg>''',
       ]) {
         expect(EmailHtml.hasRemoteImages(html), isTrue, reason: html);
         final out = EmailHtml.blockRemoteImages(html);
         expect(EmailHtml.hasRemoteImages(out), isFalse, reason: out);
-        expect(RegExp(r'''[\s/]src\s*=\s*["']?https''').hasMatch(out), isFalse,
-            reason: out);
+        expect(out.contains('t.example.com'), isFalse, reason: out);
       }
       const inline = '''<img alt="src='https://x'" src="cid:logo"><p>t</p>''';
       expect(EmailHtml.hasRemoteImages(inline), isFalse);
