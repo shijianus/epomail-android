@@ -327,19 +327,23 @@ class EmailProvider extends ChangeNotifier {
   // Drafts are stored per signed-in user so accounts sharing a device never
   // see each other's drafts.
   String _owner = '';
+  Set<String> _addresses = {};
   static const _legacyDraftsKey = 'local_drafts';
   String get _draftsKey => 'local_drafts:$_owner';
 
   /// Sets the signed-in user (email) owning the local drafts.
-  void setOwner(String owner) {
+  /// [addresses] are the user's own mailboxes (aliases included).
+  void setOwner(String owner, {Iterable<String> addresses = const []}) {
     final next = owner.trim().toLowerCase();
+    _addresses = {next, ...addresses.map((a) => a.trim().toLowerCase())}
+      ..remove('');
     if (next == _owner) return;
     _owner = next;
     _drafts = [];
   }
 
   /// Drafts saved by versions <= 1.1.0 lived under one shared key; hand each
-  /// one to the user whose address wrote it.
+  /// one to the user who owns the address that wrote it.
   Future<void> _adoptLegacyDrafts(SharedPreferences prefs) async {
     final raw = prefs.getString(_legacyDraftsKey);
     if (raw == null || _owner.isEmpty) return;
@@ -348,7 +352,7 @@ class EmailProvider extends ChangeNotifier {
           .map((e) => Map<String, dynamic>.from(e))
           .toList();
       bool mine(Map<String, dynamic> d) =>
-          d['accountEmail']?.toString().toLowerCase() == _owner;
+          _addresses.contains(d['accountEmail']?.toString().toLowerCase());
       final adopted = all.where(mine).toList();
       if (adopted.isEmpty) return;
       final existing =
@@ -427,6 +431,7 @@ class EmailProvider extends ChangeNotifier {
     _folder = MailFolder.inbox;
     _drafts = [];
     _owner = '';
+    _addresses = {};
     _loading = false;
     _loadingMore = false;
     notifyListeners();
