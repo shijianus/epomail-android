@@ -28,6 +28,7 @@ dependencies:
 
   # HTML email rendering
   flutter_html: ^3.0.0-beta.2
+  html: ^0.15.4
 
   # Utilities
   intl: ^0.19.0
@@ -38,7 +39,6 @@ dependencies:
 
   # File handling
   file_picker: ^8.1.2
-  open_filex: ^4.6.0
 
   # Icons
   cupertino_icons: ^1.0.8
