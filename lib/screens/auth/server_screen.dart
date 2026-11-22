@@ -20,13 +20,11 @@ class _ServerScreenState extends State<ServerScreen> {
   bool _busy = false;
   String? _error;
   Map<String, dynamic>? _config;
-  bool _cameFromSession = false;
 
   @override
   void initState() {
     super.initState();
     final url = context.read<AuthProvider>().baseUrl;
-    _cameFromSession = context.read<AuthProvider>().isAuthenticated;
     _ctrl.text = url.isNotEmpty ? url : ApiClient.defaultBaseUrl;
   }
 
@@ -56,6 +54,13 @@ class _ServerScreenState extends State<ServerScreen> {
         // Switching servers ends the session.
         context.read<AccountProvider>().clear();
         context.read<EmailProvider>().clear();
+        // Nothing behind this screen is valid any more, so Back must not
+        // return to the signed-out mailbox.
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const LoginScreen()),
+          (_) => false,
+        );
+        return;
       }
       _ctrl.text = auth.baseUrl;
       setState(() {
@@ -209,15 +214,7 @@ class _ServerScreenState extends State<ServerScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
-                      final signedIn =
-                          context.read<AuthProvider>().isAuthenticated;
-                      if (canPop && !signedIn && _cameFromSession) {
-                        Navigator.of(context).pushAndRemoveUntil(
-                          MaterialPageRoute(
-                              builder: (_) => const LoginScreen()),
-                          (_) => false,
-                        );
-                      } else if (canPop) {
+                      if (canPop) {
                         Navigator.pop(context);
                       } else {
                         Navigator.of(context).pushReplacement(
