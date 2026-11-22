@@ -149,6 +149,10 @@ class _ServerScreenState extends State<ServerScreen> {
                   prefixIcon: const Icon(Icons.link_rounded),
                   errorText: _error,
                 ),
+                onChanged: (_) {
+                  // The success panel describes the saved URL, not the edit.
+                  if (_config != null) setState(() => _config = null);
+                },
                 onSubmitted: (_) => _connect(),
               ),
               const SizedBox(height: 16),
