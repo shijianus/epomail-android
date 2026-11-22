@@ -94,6 +94,9 @@ void main() {
           '<img width="1" src="https://t.example.com/p.gif">'
           "<IMG SRC='http://t.example.com/q.gif' srcset=\"//t.example.com/r 2x\">"
           '<img src=https://t.example.com/u.gif>'
+          '<img src="https&#58;//t.example.com/e.gif">'
+          '<img src="&#104;ttps://t.example.com/f.gif">'
+          '<img\nsrc="HTTPS://t.example.com/g.gif">'
           '<img src="data:image/png;base64,AAAA">'
           '<img src="cid:logo">'
           '<a href="https://example.com">link</a>';
