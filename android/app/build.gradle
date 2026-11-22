@@ -22,6 +22,27 @@ if (flutterVersionName == null) {
     flutterVersionName = '1.0.0'
 }
 
+// Release signing comes from android/key.properties (git-ignored) or the
+// EPO_KEYSTORE_* environment variables. Neither is ever committed.
+def keystoreProperties = new Properties()
+def keystorePropertiesFile = rootProject.file('key.properties')
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.withReader('UTF-8') { reader ->
+        keystoreProperties.load(reader)
+    }
+}
+def signingValue = { String prop, String env ->
+    keystoreProperties.getProperty(prop) ?: System.getenv(env)
+}
+def releaseStoreFile = signingValue('storeFile', 'EPO_KEYSTORE_FILE')
+def hasReleaseKeystore = releaseStoreFile != null && !releaseStoreFile.isEmpty()
+def requireReleaseKeystore = System.getenv('EPO_REQUIRE_RELEASE_SIGNING') == 'true'
+if (requireReleaseKeystore && !hasReleaseKeystore) {
+    throw new GradleException(
+        'Release signing is required but no keystore is configured. ' +
+        'See "Release signing" in README.md.')
+}
+
 android {
     namespace "com.epocanvas.mail"
     compileSdk 35
@@ -49,9 +70,22 @@ android {
         multiDexEnabled true
     }
 
+    signingConfigs {
+        if (hasReleaseKeystore) {
+            release {
+                storeFile file(releaseStoreFile)
+                storePassword signingValue('storePassword', 'EPO_KEYSTORE_PASSWORD')
+                keyAlias signingValue('keyAlias', 'EPO_KEY_ALIAS')
+                keyPassword signingValue('keyPassword', 'EPO_KEY_PASSWORD')
+            }
+        }
+    }
+
     buildTypes {
         release {
-            signingConfig signingConfigs.debug
+            // Without a keystore the APK is debug-signed: fine for a local
+            // smoke test, never for distribution (CI refuses to publish it).
+            signingConfig hasReleaseKeystore ? signingConfigs.release : signingConfigs.debug
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

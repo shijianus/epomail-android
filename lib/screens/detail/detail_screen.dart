@@ -9,6 +9,7 @@ import '../../providers/auth_provider.dart';
 import '../../api/api_client.dart';
 import '../../theme/app_theme.dart';
 import '../../utils/date_utils.dart';
+import '../../utils/email_html.dart';
 import '../../widgets/letter_avatar.dart';
 import '../compose/compose_screen.dart';
 
@@ -26,6 +27,8 @@ class _DetailScreenState extends State<DetailScreen> {
   TranslateResult? _translation;
   bool _showTranslation = false;
   String _targetLang = 'zh';
+  // Remote images double as tracking pixels; load them only on request.
+  bool _showRemoteImages = false;
 
   @override
   void initState() {
@@ -45,8 +48,8 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _toggleStar() async {
-    await context.read<EmailProvider>().toggleStar(_email);
-    if (!mounted) return;
+    final prov = context.read<EmailProvider>();
+    if (!await _run(() => prov.toggleStar(_email)) || !mounted) return;
     setState(() => _email = _email.copyWith(isStar: !_email.isStar));
   }
 
@@ -69,8 +72,10 @@ class _DetailScreenState extends State<DetailScreen> {
       ),
     );
     if (ok == true && mounted) {
-      await context.read<EmailProvider>().deleteEmail(_email.emailId);
-      if (mounted) Navigator.pop(context);
+      final prov = context.read<EmailProvider>();
+      if (await _run(() => prov.deleteEmail(_email.emailId)) && mounted) {
+        Navigator.pop(context);
+      }
     }
   }
 
@@ -113,23 +118,31 @@ class _DetailScreenState extends State<DetailScreen> {
   // ─── Actions ─────────────────────────────────────────────────────────────
 
   Future<void> _restore() async {
-    await context.read<EmailProvider>().restore(_email.emailId);
-    if (mounted) Navigator.pop(context);
+    final prov = context.read<EmailProvider>();
+    if (await _run(() => prov.restore(_email.emailId)) && mounted) {
+      Navigator.pop(context);
+    }
   }
 
   Future<void> _reportNotSpam() async {
-    await context.read<EmailProvider>().reportNotSpam(_email.emailId);
-    if (mounted) Navigator.pop(context);
+    final prov = context.read<EmailProvider>();
+    if (await _run(() => prov.reportNotSpam(_email.emailId)) && mounted) {
+      Navigator.pop(context);
+    }
   }
 
   Future<void> _reportSpam() async {
-    await context.read<EmailProvider>().reportSpam(_email.emailId);
-    if (mounted) Navigator.pop(context);
+    final prov = context.read<EmailProvider>();
+    if (await _run(() => prov.reportSpam(_email.emailId)) && mounted) {
+      Navigator.pop(context);
+    }
   }
 
   Future<void> _markUnread() async {
-    await context.read<EmailProvider>().markUnread(_email.emailId);
-    if (mounted) Navigator.pop(context);
+    final prov = context.read<EmailProvider>();
+    if (await _run(() => prov.markUnread(_email.emailId)) && mounted) {
+      Navigator.pop(context);
+    }
   }
 
   Future<void> _snoozeDialog() async {
@@ -184,12 +197,13 @@ class _DetailScreenState extends State<DetailScreen> {
       ),
     );
     if (picked == null || !mounted) return;
-    await context.read<EmailProvider>().snooze(
+    final prov = context.read<EmailProvider>();
+    final done = await _run(() => prov.snooze(
           _email.emailId,
           _fmt(picked.value),
           _fmt(picked.value.add(const Duration(hours: 24))),
-        );
-    if (mounted) {
+        ));
+    if (done && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text('Snoozed until ${EpoDate.full(_fmt(picked.value))}'),
       ));
@@ -251,11 +265,12 @@ class _DetailScreenState extends State<DetailScreen> {
       ),
     );
     if (ok == true && mounted) {
-      await context
-          .read<EmailProvider>()
-          .setLabels(_email.emailId, selected.toList());
-      if (mounted)
+      final prov = context.read<EmailProvider>();
+      final done =
+          await _run(() => prov.setLabels(_email.emailId, selected.toList()));
+      if (done && mounted) {
         setState(() => _email = _email.copyWith(labels: selected.toList()));
+      }
     }
   }
 
@@ -285,14 +300,68 @@ class _DetailScreenState extends State<DetailScreen> {
   }
 
   Future<void> _downloadAttachment(AttachmentModel att) async {
-    final url = await ApiClient.instance.attachmentUrl(att.key);
-    final uri = Uri.tryParse(url);
-    if (uri != null && await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
-    } else if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Unable to open attachment')));
+    try {
+      final url = await ApiClient.instance.attachmentUrl(att.key);
+      if (await launchUrl(Uri.parse(url),
+          mode: LaunchMode.externalApplication)) {
+        return;
+      }
+    } catch (_) {}
+    _toast('Unable to open attachment');
+  }
+
+  /// Email links are attacker-controlled: only web / mail / phone links are
+  /// opened, and the real destination is confirmed first.
+  Future<void> _openLink(String? url) async {
+    final uri = EmailHtml.safeLink(url);
+    if (uri == null) {
+      _toast('This link type is blocked');
+      return;
     }
+    if (uri.scheme == 'http' || uri.scheme == 'https') {
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Open link?'),
+          content: Text(uri.toString(), maxLines: 8),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Open'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+    }
+    try {
+      if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+    } catch (_) {}
+    _toast('Unable to open link');
+  }
+
+  void _toast(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Runs a mailbox action; a failure shows a message instead of being lost.
+  Future<bool> _run(Future<void> Function() action) async {
+    try {
+      await action();
+      return true;
+    } on ApiException catch (e) {
+      if (!e.isAuthError) _toast(e.message);
+    } catch (_) {
+      _toast('Action failed. Check your connection.');
+    }
+    return false;
   }
 
   @override
@@ -625,10 +694,40 @@ class _DetailScreenState extends State<DetailScreen> {
                     ),
                   ),
 
+                  if (!_showRemoteImages &&
+                      EmailHtml.hasRemoteImages(bodyHtml))
+                    Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.only(left: 12),
+                      decoration: BoxDecoration(
+                        color: scheme.onSurface.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.image_not_supported_outlined,
+                              size: 16),
+                          const SizedBox(width: 8),
+                          const Expanded(
+                            child: Text('Remote images are hidden',
+                                style: TextStyle(fontSize: 12.5)),
+                          ),
+                          TextButton(
+                            onPressed: () =>
+                                setState(() => _showRemoteImages = true),
+                            child: const Text('Show images',
+                                style: TextStyle(fontSize: 13)),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   // HTML body
                   Html(
                     data: bodyHtml.isNotEmpty
-                        ? bodyHtml
+                        ? (_showRemoteImages
+                            ? bodyHtml
+                            : EmailHtml.blockRemoteImages(bodyHtml))
                         : (_email.textBody ?? '(Empty)'),
                     style: {
                       'body': Style(
@@ -639,15 +738,7 @@ class _DetailScreenState extends State<DetailScreen> {
                       'a': Style(color: AppTheme.blue),
                       'img': Style(width: Width.auto()),
                     },
-                    onLinkTap: (url, _, __) async {
-                      if (url != null) {
-                        final uri = Uri.tryParse(url);
-                        if (uri != null && await canLaunchUrl(uri)) {
-                          await launchUrl(uri,
-                              mode: LaunchMode.externalApplication);
-                        }
-                      }
-                    },
+                    onLinkTap: (url, _, __) => _openLink(url),
                   ),
 
                   // Attachments

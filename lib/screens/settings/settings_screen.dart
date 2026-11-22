@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/auth_provider.dart';
+import '../../providers/account_provider.dart';
+import '../../providers/email_provider.dart';
 import '../../providers/theme_provider.dart';
 import '../../models/user_model.dart';
 import '../../api/api_client.dart';
@@ -421,6 +423,8 @@ class SettingsScreen extends StatelessWidget {
     if (confirm == true && context.mounted) {
       await context.read<AuthProvider>().logout();
       if (context.mounted) {
+        context.read<AccountProvider>().clear();
+        context.read<EmailProvider>().clear();
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const ServerScreen()),
           (_) => false,

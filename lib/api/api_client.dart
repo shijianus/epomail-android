@@ -5,9 +5,13 @@ import 'package:dio/io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../security/token_store.dart';
+
 /// Centralised HTTP client wrapping Dio.
 /// - Hardcoded default server: https://mail.epocanvas.com
-/// - Auto-injects [Authorization] token from SharedPreferences.
+/// - Auto-injects the [Authorization] token from [TokenStore], only for the
+///   server origin that issued it.
+/// - HTTPS only: cleartext server URLs are rejected.
 /// - Guarantees `/api` prefix on all endpoints with zero URI resolution loss.
 /// - Unwraps the backend's `{ code, data, message }` envelope.
 /// - Optional outbound proxy via the `EPO_HTTP_PROXY` env var
@@ -24,6 +28,9 @@ class ApiClient {
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 30),
     sendTimeout: const Duration(seconds: 30),
+    followRedirects: false,
+    // The backend reports errors in the JSON envelope; read it on any status.
+    validateStatus: (_) => true,
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
@@ -31,6 +38,32 @@ class ApiClient {
   ));
 
   bool _interceptorAdded = false;
+
+  /// Called when the server rejects the stored session token (code 401).
+  void Function()? onUnauthorized;
+
+  /// Canonical form of a user-supplied server URL. Throws [ApiException]
+  /// unless it is an absolute `https://` URL.
+  static String normalizeBaseUrl(String input) {
+    var raw = input.trim();
+    if (raw.isEmpty) return defaultBaseUrl;
+    if (!raw.contains('://')) raw = 'https://$raw';
+    final uri = Uri.tryParse(raw);
+    if (uri == null || uri.host.isEmpty) {
+      throw ApiException('Invalid server URL', -1);
+    }
+    if (uri.scheme != 'https') {
+      throw ApiException('Server URL must start with https://', -1);
+    }
+    if (uri.userInfo.isNotEmpty || uri.hasQuery || uri.hasFragment) {
+      throw ApiException('Invalid server URL', -1);
+    }
+    var path = uri.path;
+    while (path.endsWith('/')) {
+      path = path.substring(0, path.length - 1);
+    }
+    return '${uri.origin}$path';
+  }
 
   /// Dart's HttpClient ignores OS proxy env vars, so wire an explicit proxy
   /// when EPO_HTTP_PROXY is present (host:port or http://host:port).
@@ -62,11 +95,11 @@ class ApiClient {
 
     _dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
-        final prefs = await SharedPreferences.getInstance();
-        final token = prefs.getString('auth_token') ?? '';
-
-        if (token.isNotEmpty) {
-          options.headers['Authorization'] = token;
+        final session = await TokenStore.read();
+        if (session != null &&
+            session.origin.isNotEmpty &&
+            session.origin == TokenStore.originOf(options.path)) {
+          options.headers['Authorization'] = session.token;
         }
 
         if (kDebugMode) {
@@ -75,8 +108,10 @@ class ApiClient {
         handler.next(options);
       },
       onError: (error, handler) {
-        debugPrint(
-            '[API ERROR] ${error.message} on ${error.requestOptions.path}');
+        if (kDebugMode) {
+          debugPrint(
+              '[API ERROR] ${error.message} on ${error.requestOptions.path}');
+        }
         handler.next(error);
       },
     ));
@@ -86,16 +121,9 @@ class ApiClient {
   /// e.g. "https://mail.epocanvas.com/api/setting/websiteConfig"
   Future<String> _buildFullUrl(String path) async {
     final prefs = await SharedPreferences.getInstance();
-    var raw = (prefs.getString('base_url') ?? '').trim();
-    if (raw.isEmpty) {
-      raw = defaultBaseUrl;
-      await prefs.setString('base_url', raw);
-    }
-
-    // Strip trailing slashes
-    while (raw.endsWith('/')) {
-      raw = raw.substring(0, raw.length - 1);
-    }
+    final stored = (prefs.getString('base_url') ?? '').trim();
+    if (stored.isEmpty) await prefs.setString('base_url', defaultBaseUrl);
+    final raw = normalizeBaseUrl(stored);
 
     // Ensure /api prefix
     final base = raw.endsWith('/api') ? raw : '$raw/api';
@@ -112,17 +140,20 @@ class ApiClient {
   Future<String> attachmentUrl(String key) async {
     final base = await _rawBase();
     final clean = key.startsWith('/') ? key.substring(1) : key;
-    return '$base/attachments/$clean';
+    final uri = Uri.parse('$base/attachments/$clean');
+    // Keys come from the server; never let one point outside /attachments.
+    final root = Uri.parse('$base/attachments/');
+    if (clean.isEmpty ||
+        uri.origin != root.origin ||
+        !uri.path.startsWith(root.path)) {
+      throw ApiException('Invalid attachment', -1);
+    }
+    return uri.toString();
   }
 
   Future<String> _rawBase() async {
     final prefs = await SharedPreferences.getInstance();
-    var raw = (prefs.getString('base_url') ?? '').trim();
-    if (raw.isEmpty) raw = defaultBaseUrl;
-    while (raw.endsWith('/')) {
-      raw = raw.substring(0, raw.length - 1);
-    }
-    return raw;
+    return normalizeBaseUrl(prefs.getString('base_url') ?? '');
   }
 
   Future<T> get<T>(
@@ -181,9 +212,15 @@ class ApiClient {
     if (code == 200) {
       return parse(body['data']);
     }
-    if (code == 401) throw ApiException(body['message'] ?? 'Unauthorized', 401);
-    if (code == 403) throw ApiException(body['message'] ?? 'Forbidden', 403);
-    throw ApiException(body['message'] ?? 'Server error', code);
+    final message = body['message']?.toString();
+    if (code == 401) {
+      if (res.requestOptions.headers.containsKey('Authorization')) {
+        onUnauthorized?.call();
+      }
+      throw ApiException(message ?? 'Unauthorized', 401);
+    }
+    if (code == 403) throw ApiException(message ?? 'Forbidden', 403);
+    throw ApiException(message ?? 'Server error', code);
   }
 }
 

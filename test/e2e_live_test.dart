@@ -9,6 +9,7 @@ import 'package:epomail/api/email_api.dart';
 import 'package:epomail/api/account_api.dart';
 import 'package:epomail/models/email_model.dart';
 import 'package:epomail/models/user_model.dart';
+import 'package:epomail/security/token_store.dart';
 
 /// LIVE end-to-end contract test against a real epomail deployment.
 ///
@@ -17,33 +18,31 @@ import 'package:epomail/models/user_model.dart';
 /// every Android client endpoint against the real backend, and PHYSICALLY
 /// deletes the account in `finally` — zero fake data residue.
 ///
-/// Overrides (passed via `flutter test --dart-define=...`):
-///   E2E_BASE_URL       (default https://epomail.epocanvas.workers.dev)
-///   E2E_ADMIN_EMAIL    (default admin@epomail.bond)
-///   E2E_ADMIN_PASSWORD (default 123456)
+/// Required (passed via `flutter test --dart-define=...`); the test is skipped
+/// when any is missing. Credentials are never stored in the repository.
+///   E2E_BASE_URL
+///   E2E_ADMIN_EMAIL
+///   E2E_ADMIN_PASSWORD
 void main() {
-  final base = const String.fromEnvironment('E2E_BASE_URL',
-      defaultValue: 'https://epomail.epocanvas.workers.dev');
-  final adminEmail = const String.fromEnvironment('E2E_ADMIN_EMAIL',
-      defaultValue: 'admin@epomail.bond');
-  final adminPassword = const String.fromEnvironment('E2E_ADMIN_PASSWORD',
-      defaultValue: '123456');
+  const base = String.fromEnvironment('E2E_BASE_URL');
+  const adminEmail = String.fromEnvironment('E2E_ADMIN_EMAIL');
+  const adminPassword = String.fromEnvironment('E2E_ADMIN_PASSWORD');
+  final configured =
+      base.isNotEmpty && adminEmail.isNotEmpty && adminPassword.isNotEmpty;
 
   late AuthApi authApi;
   late EmailApi emailApi;
   late AccountApi accountApi;
 
   setUpAll(() async {
-    SharedPreferences.setMockInitialValues(
-        {'base_url': base, 'auth_token': ''});
+    SharedPreferences.setMockInitialValues({'base_url': base});
     authApi = AuthApi();
     emailApi = EmailApi();
     accountApi = AccountApi();
   });
 
   Future<void> setToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token);
+    await TokenStore.write(token, TokenStore.originOf(base));
   }
 
   Future<List<EmailModel>> fetchRows(String accountId) async {
@@ -55,6 +54,9 @@ void main() {
 
   test(
       'full-stack: login → welcome email → star/read/labels/snooze → send → cleanup',
+      skip: configured
+          ? false
+          : 'set E2E_BASE_URL, E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD',
       timeout: const Timeout(Duration(minutes: 4)), () async {
     final ts = DateTime.now().millisecondsSinceEpoch;
     final testEmail = 'android_e2e_$ts@epomail.bond';

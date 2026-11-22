@@ -324,9 +324,55 @@ class EmailProvider extends ChangeNotifier {
 
   // ─── Local drafts (web keeps drafts client-side as well) ────────────────
 
+  // Drafts are stored per signed-in user so accounts sharing a device never
+  // see each other's drafts.
+  String _owner = '';
+  static const _legacyDraftsKey = 'local_drafts';
+  String get _draftsKey => 'local_drafts:$_owner';
+
+  /// Sets the signed-in user (email) owning the local drafts.
+  void setOwner(String owner) {
+    final next = owner.trim().toLowerCase();
+    if (next == _owner) return;
+    _owner = next;
+    _drafts = [];
+  }
+
+  /// Drafts saved by versions <= 1.1.0 lived under one shared key; hand each
+  /// one to the user whose address wrote it.
+  Future<void> _adoptLegacyDrafts(SharedPreferences prefs) async {
+    final raw = prefs.getString(_legacyDraftsKey);
+    if (raw == null || _owner.isEmpty) return;
+    try {
+      final all = (jsonDecode(raw) as List<dynamic>)
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      bool mine(Map<String, dynamic> d) =>
+          d['accountEmail']?.toString().toLowerCase() == _owner;
+      final adopted = all.where(mine).toList();
+      if (adopted.isEmpty) return;
+      final existing =
+          jsonDecode(prefs.getString(_draftsKey) ?? '[]') as List<dynamic>;
+      await prefs.setString(_draftsKey, jsonEncode([...existing, ...adopted]));
+      final rest = all.where((d) => !mine(d)).toList();
+      if (rest.isEmpty) {
+        await prefs.remove(_legacyDraftsKey);
+      } else {
+        await prefs.setString(_legacyDraftsKey, jsonEncode(rest));
+      }
+    } catch (_) {
+      await prefs.remove(_legacyDraftsKey);
+    }
+  }
+
   Future<void> _loadLocalDrafts() async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('local_drafts') ?? '[]';
+    if (_owner.isEmpty) {
+      _drafts = [];
+      return;
+    }
+    await _adoptLegacyDrafts(prefs);
+    final raw = prefs.getString(_draftsKey) ?? '[]';
     try {
       final list = (jsonDecode(raw) as List<dynamic>)
           .map((e) => LocalDraft.fromJson(Map<String, dynamic>.from(e)))
@@ -347,8 +393,9 @@ class EmailProvider extends ChangeNotifier {
     } else {
       _drafts.insert(0, draft);
     }
+    if (_owner.isEmpty) return;
     await prefs.setString(
-        'local_drafts', jsonEncode(_drafts.map((d) => d.toJson()).toList()));
+        _draftsKey, jsonEncode(_drafts.map((d) => d.toJson()).toList()));
     notifyListeners();
   }
 
@@ -356,8 +403,9 @@ class EmailProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await _loadLocalDrafts();
     _drafts.removeWhere((d) => d.id == id);
+    if (_owner.isEmpty) return;
     await prefs.setString(
-        'local_drafts', jsonEncode(_drafts.map((d) => d.toJson()).toList()));
+        _draftsKey, jsonEncode(_drafts.map((d) => d.toJson()).toList()));
     notifyListeners();
   }
 
@@ -377,6 +425,10 @@ class EmailProvider extends ChangeNotifier {
     _labelFilter = null;
     _selected = null;
     _folder = MailFolder.inbox;
+    _drafts = [];
+    _owner = '';
+    _loading = false;
+    _loadingMore = false;
     notifyListeners();
   }
 

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../providers/auth_provider.dart';
+import '../../providers/account_provider.dart';
+import '../../providers/email_provider.dart';
 import '../../api/api_client.dart';
 import '../../theme/app_theme.dart';
 import 'login_screen.dart';
@@ -18,11 +20,13 @@ class _ServerScreenState extends State<ServerScreen> {
   bool _busy = false;
   String? _error;
   Map<String, dynamic>? _config;
+  bool _cameFromSession = false;
 
   @override
   void initState() {
     super.initState();
     final url = context.read<AuthProvider>().baseUrl;
+    _cameFromSession = context.read<AuthProvider>().isAuthenticated;
     _ctrl.text = url.isNotEmpty ? url : ApiClient.defaultBaseUrl;
   }
 
@@ -44,12 +48,30 @@ class _ServerScreenState extends State<ServerScreen> {
       _config = null;
     });
     try {
-      final cfg = await context.read<AuthProvider>().connectServer(url);
+      final auth = context.read<AuthProvider>();
+      final wasSignedIn = auth.isAuthenticated;
+      final cfg = await auth.connectServer(url);
+      if (!mounted) return;
+      if (wasSignedIn && !auth.isAuthenticated) {
+        // Switching servers ends the session.
+        context.read<AccountProvider>().clear();
+        context.read<EmailProvider>().clear();
+      }
+      _ctrl.text = auth.baseUrl;
       setState(() {
         _config = cfg;
         _busy = false;
       });
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _error = e.code == -1
+            ? e.message
+            : 'Cannot connect to server. Check URL or network.';
+        _busy = false;
+      });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = 'Cannot connect to server. Check URL or network.';
         _busy = false;
@@ -187,7 +209,15 @@ class _ServerScreenState extends State<ServerScreen> {
                   width: double.infinity,
                   child: ElevatedButton(
                     onPressed: () {
-                      if (canPop) {
+                      final signedIn =
+                          context.read<AuthProvider>().isAuthenticated;
+                      if (canPop && !signedIn && _cameFromSession) {
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(
+                              builder: (_) => const LoginScreen()),
+                          (_) => false,
+                        );
+                      } else if (canPop) {
                         Navigator.pop(context);
                       } else {
                         Navigator.of(context).pushReplacement(
