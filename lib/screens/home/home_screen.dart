@@ -33,9 +33,6 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      context
-          .read<EmailProvider>()
-          .setOwner(context.read<AuthProvider>().user?.email ?? '');
       _load(refresh: true);
       // Server profile is the authority for appearance (parity with web init).
       final user = context.read<AuthProvider>().user;
@@ -62,8 +59,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _load({bool refresh = false, MailFolder? folder}) async {
-    final account = context.read<AccountProvider>().current;
+    final accounts = context.read<AccountProvider>();
+    final account = accounts.current;
     if (account == null) return;
+    context.read<EmailProvider>().setOwner(
+          context.read<AuthProvider>().user?.email ?? '',
+          addresses: accounts.accounts.map((a) => a.email),
+        );
     await _guarded(() => context.read<EmailProvider>().load(
           accountId: account.accountId,
           folder: folder,
