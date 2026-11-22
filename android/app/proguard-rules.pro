@@ -11,4 +11,5 @@
 -keep class com.it_nomads.fluttersecurestorage.** { *; }
 -keep class androidx.biometric.** { *; }
 -keepattributes SourceFile,LineNumberTable
--dontwarn **
+# Play Core is referenced by the Flutter engine but not shipped (no deferred components).
+-dontwarn com.google.android.play.core.**

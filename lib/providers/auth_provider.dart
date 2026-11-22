@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../api/auth_api.dart';
 import '../api/api_client.dart';
 import '../models/user_model.dart';
+import '../security/token_store.dart';
 
 enum AuthState { loading, unauthenticated, mfaRequired, authenticated }
 
@@ -23,6 +24,23 @@ class AuthProvider extends ChangeNotifier {
 
   final _api = AuthApi();
 
+  /// Invoked when the server rejects the session while the user is signed in.
+  VoidCallback? onSessionExpired;
+
+  AuthProvider() {
+    ApiClient.instance.onUnauthorized = _handleUnauthorized;
+  }
+
+  void _handleUnauthorized() {
+    if (_state != AuthState.authenticated) return;
+    _state = AuthState.unauthenticated;
+    _user = null;
+    _tempToken = null;
+    TokenStore.clear();
+    notifyListeners();
+    onSessionExpired?.call();
+  }
+
   // ─── Initialisation ──────────────────────────────────────────────────────
 
   Future<void> init() async {
@@ -32,7 +50,14 @@ class AuthProvider extends ChangeNotifier {
       _baseUrl = ApiClient.defaultBaseUrl;
       await prefs.setString('base_url', _baseUrl);
     } else {
-      _baseUrl = savedUrl.trim();
+      try {
+        _baseUrl = ApiClient.normalizeBaseUrl(savedUrl);
+      } on ApiException {
+        // A stored cleartext / malformed URL is no longer accepted.
+        _baseUrl = ApiClient.defaultBaseUrl;
+        await TokenStore.clear();
+      }
+      if (_baseUrl != savedUrl) await prefs.setString('base_url', _baseUrl);
     }
 
     try {
@@ -41,8 +66,8 @@ class AuthProvider extends ChangeNotifier {
       // Server config fetch is non-blocking
     }
 
-    final token = prefs.getString('auth_token') ?? '';
-    if (token.isEmpty) {
+    final session = await TokenStore.read();
+    if (session == null) {
       _state = AuthState.unauthenticated;
       notifyListeners();
       return;
@@ -52,8 +77,11 @@ class AuthProvider extends ChangeNotifier {
       final info = await _api.loginUserInfo();
       _user = UserModel.fromJson(info);
       _state = AuthState.authenticated;
+    } on ApiException catch (e) {
+      if (e.isAuthError) await TokenStore.clear();
+      _state = AuthState.unauthenticated;
     } catch (_) {
-      await prefs.remove('auth_token');
+      // Offline / server unreachable: keep the session for the next launch.
       _state = AuthState.unauthenticated;
     }
     notifyListeners();
@@ -62,18 +90,27 @@ class AuthProvider extends ChangeNotifier {
   // ─── Server setup ────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> connectServer(String url) async {
-    var cleaned = url.trim();
-    while (cleaned.endsWith('/')) {
-      cleaned = cleaned.substring(0, cleaned.length - 1);
-    }
-    if (cleaned.isEmpty) cleaned = ApiClient.defaultBaseUrl;
+    final cleaned = ApiClient.normalizeBaseUrl(url);
+    final previous = _baseUrl;
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('base_url', cleaned);
-    _baseUrl = cleaned;
-    notifyListeners();
+    final Map<String, dynamic> config;
+    try {
+      config = await _api.websiteConfig();
+    } catch (_) {
+      await prefs.setString('base_url', previous);
+      rethrow;
+    }
 
-    final config = await _api.websiteConfig();
+    // A session belongs to the server that issued it.
+    if (TokenStore.originOf(cleaned) != TokenStore.originOf(previous)) {
+      await TokenStore.clear();
+      _user = null;
+      _tempToken = null;
+      _state = AuthState.unauthenticated;
+    }
+    _baseUrl = cleaned;
     _serverConfig = config;
     notifyListeners();
     return config;
@@ -92,6 +129,7 @@ class AuthProvider extends ChangeNotifier {
     }
     await _saveToken(result['token']?.toString() ?? '');
     await _loadUser();
+    _tempToken = null;
     return true;
   }
 
@@ -100,6 +138,7 @@ class AuthProvider extends ChangeNotifier {
     final token = await _api.verifyTotp(_tempToken!, code);
     await _saveToken(token);
     await _loadUser();
+    _tempToken = null;
   }
 
   // ─── Register ────────────────────────────────────────────────────────────
@@ -116,11 +155,15 @@ class AuthProvider extends ChangeNotifier {
   // ─── Logout ──────────────────────────────────────────────────────────────
 
   Future<void> logout() async {
-    try {
-      await _api.logout();
-    } catch (_) {}
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('auth_token');
+    final wasAuthenticated = _state == AuthState.authenticated;
+    // Flip first so a 401 on the logout call is not reported as an expiry.
+    _state = AuthState.unauthenticated;
+    if (wasAuthenticated) {
+      try {
+        await _api.logout();
+      } catch (_) {}
+    }
+    await TokenStore.clear();
     _user = null;
     _tempToken = null;
     _state = AuthState.unauthenticated;
@@ -147,8 +190,8 @@ class AuthProvider extends ChangeNotifier {
   // ─── Private ─────────────────────────────────────────────────────────────
 
   Future<void> _saveToken(String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('auth_token', token);
+    if (token.isEmpty) throw ApiException('Sign-in failed', -1);
+    await TokenStore.write(token, TokenStore.originOf(_baseUrl));
   }
 
   Future<void> _loadUser() async {

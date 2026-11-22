@@ -5,6 +5,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/account_provider.dart';
 import '../../providers/email_provider.dart';
 import '../../providers/theme_provider.dart';
+import '../../api/api_client.dart';
 import '../../models/user_model.dart';
 import '../../models/email_model.dart';
 import '../../theme/app_theme.dart';
@@ -32,6 +33,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _scroll.addListener(_onScroll);
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      context
+          .read<EmailProvider>()
+          .setOwner(context.read<AuthProvider>().user?.email ?? '');
       _load(refresh: true);
       // Server profile is the authority for appearance (parity with web init).
       final user = context.read<AuthProvider>().user;
@@ -51,33 +55,56 @@ class _HomeScreenState extends State<HomeScreen> {
   void _onScroll() {
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 200) {
       final accountId = context.read<AccountProvider>().current?.accountId;
-      if (accountId != null) context.read<EmailProvider>().loadMore(accountId);
+      if (accountId != null) {
+        _guarded(() => context.read<EmailProvider>().loadMore(accountId));
+      }
     }
   }
 
   Future<void> _load({bool refresh = false, MailFolder? folder}) async {
     final account = context.read<AccountProvider>().current;
     if (account == null) return;
-    await context.read<EmailProvider>().load(
+    await _guarded(() => context.read<EmailProvider>().load(
           accountId: account.accountId,
           folder: folder,
           refresh: refresh,
-        );
+        ));
     if (mounted) await context.read<AccountProvider>().refreshStats();
   }
 
   Future<void> _search(String kw) async {
     final account = context.read<AccountProvider>().current;
     if (account == null) return;
-    await context.read<EmailProvider>().load(
+    await _guarded(() => context.read<EmailProvider>().load(
           accountId: account.accountId,
           keyword: kw.isEmpty ? null : kw,
           refresh: true,
-        );
+        ));
+  }
+
+  /// Network failures surface as a message instead of an unhandled error.
+  Future<void> _guarded(Future<void> Function() action) async {
+    try {
+      await action();
+    } on ApiException catch (e) {
+      // A 401 is handled globally (session expiry → sign-in screen).
+      if (!e.isAuthError) _notify(e.message);
+    } catch (_) {
+      _notify('Network error. Pull down to retry.');
+    }
+  }
+
+  void _notify(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _openEmail(EmailModel email) {
-    if (!email.isRead) context.read<EmailProvider>().markRead(email.emailId);
+    if (!email.isRead) {
+      context.read<EmailProvider>().markRead(email.emailId).catchError((_) {});
+    }
     Navigator.of(context)
         .push(
       MaterialPageRoute(builder: (_) => DetailScreen(email: email)),

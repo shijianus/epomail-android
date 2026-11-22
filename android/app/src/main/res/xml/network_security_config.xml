@@ -1,9 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true">
+    <!-- HTTPS only, validated against the system CA store. -->
+    <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
+    <!-- Debug builds also trust user CAs so a proxy can inspect traffic. -->
+    <debug-overrides>
+        <trust-anchors>
+            <certificates src="user" />
+        </trust-anchors>
+    </debug-overrides>
 </network-security-config>

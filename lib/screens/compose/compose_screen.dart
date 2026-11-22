@@ -92,10 +92,38 @@ class _ComposeScreenState extends State<ComposeScreen> {
         .toList();
   }
 
+  // Attachments are sent base64-encoded inside one JSON request, so they are
+  // capped to keep memory use and request size bounded.
+  static const _maxAttachments = 10;
+  static const _maxAttachmentBytes = 20 * 1024 * 1024;
+
   Future<void> _pickAttachments() async {
     final res = await FilePicker.platform.pickFiles(allowMultiple: true);
-    if (res != null && mounted) {
-      setState(() => _attachments.addAll(res.files));
+    if (res == null || !mounted) return;
+    final next = [..._attachments];
+    var total = next.fold<int>(0, (sum, f) => sum + f.size);
+    String? rejected;
+    for (final f in res.files) {
+      if (f.path == null) continue;
+      if (next.length >= _maxAttachments) {
+        rejected = 'You can attach up to $_maxAttachments files.';
+        break;
+      }
+      if (total + f.size > _maxAttachmentBytes) {
+        rejected = 'Attachments are limited to 20 MB in total.';
+        continue;
+      }
+      total += f.size;
+      next.add(f);
+    }
+    setState(() {
+      _attachments
+        ..clear()
+        ..addAll(next);
+    });
+    if (rejected != null) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(rejected)));
     }
   }
 
@@ -122,21 +150,31 @@ class _ComposeScreenState extends State<ComposeScreen> {
     return '<div dir="ltr">$buf</div>';
   }
 
-  List<Map<String, dynamic>> _attachmentPayload() {
-    return _attachments.where((f) => f.path != null).map((f) {
-      final bytes = File(f.path!).readAsBytesSync();
-      return {
+  Future<List<Map<String, dynamic>>> _attachmentPayload() async {
+    final out = <Map<String, dynamic>>[];
+    var total = 0;
+    for (final f in _attachments) {
+      if (f.path == null) continue;
+      final bytes = await File(f.path!).readAsBytes();
+      total += bytes.length;
+      // Re-checked here: the file may have grown since it was picked.
+      if (total > _maxAttachmentBytes) {
+        throw ApiException('Attachments are limited to 20 MB in total.', -1);
+      }
+      out.add({
         'content': base64Encode(bytes),
         'filename': f.name,
         'size': bytes.length,
         'contentType': f.name.toLowerCase().endsWith('.pdf')
             ? 'application/pdf'
             : 'application/octet-stream',
-      };
-    }).toList();
+      });
+    }
+    return out;
   }
 
   Future<void> _send() async {
+    if (_sending) return;
     final toList = _parseEmails(_toCtrl.text);
     if (toList.isEmpty) {
       setState(() => _error = 'Please enter at least one recipient email.');
@@ -156,7 +194,9 @@ class _ComposeScreenState extends State<ComposeScreen> {
 
     try {
       final body = _bodyCtrl.text.trim();
-      await context.read<EmailProvider>().send(
+      final emails = context.read<EmailProvider>();
+      final attachments = await _attachmentPayload();
+      await emails.send(
             accountId: account.accountId,
             accountName: account.name,
             receiveEmail: toList,
@@ -164,12 +204,12 @@ class _ComposeScreenState extends State<ComposeScreen> {
                 ? '(No Subject)'
                 : _subjectCtrl.text.trim(),
             content: _buildHtml(body.isEmpty ? '(No content)' : body),
-            attachments: _attachmentPayload(),
+            attachments: attachments,
           );
 
       // Remove the local draft if this send originated from one.
       if (_draftId != null) {
-        await context.read<EmailProvider>().deleteDraft(_draftId!);
+        await emails.deleteDraft(_draftId!);
       }
 
       if (!mounted) return;
@@ -181,9 +221,11 @@ class _ComposeScreenState extends State<ComposeScreen> {
       );
       Navigator.pop(context);
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
     } catch (_) {
-      setState(() => _error = 'Failed to send email. Please try again.');
+      if (mounted) {
+        setState(() => _error = 'Failed to send email. Please try again.');
+      }
     } finally {
       if (mounted) setState(() => _sending = false);
     }

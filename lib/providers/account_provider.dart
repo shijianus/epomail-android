@@ -31,7 +31,9 @@ class AccountProvider extends ChangeNotifier {
       } else if (_current != null) {
         final updated =
             _accounts.where((a) => a.accountId == _current!.accountId);
-        if (updated.isNotEmpty) _current = updated.first;
+        _current = updated.isNotEmpty
+            ? updated.first
+            : (_accounts.isNotEmpty ? _accounts.first : null);
       }
     } finally {
       _loading = false;
@@ -66,10 +68,6 @@ class AccountProvider extends ChangeNotifier {
 
   Future<void> removeAccount(String accountId) async {
     await _accountApi.delete(accountId);
-    if (_current?.accountId == accountId) {
-      _current = _accounts.firstWhere((a) => a.accountId != accountId,
-          orElse: () => _accounts.first);
-    }
     await load();
   }
 

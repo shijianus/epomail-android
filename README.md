@@ -53,6 +53,36 @@
    The generated APK will be available at:
    `build/app/outputs/flutter-apk/app-release.apk`
 
+### Release signing
+
+Without a keystore, `flutter build apk --release` produces a **debug-signed** APK
+that is only suitable for local testing. To build a distributable APK:
+
+1. Create a keystore once and keep it (and its passwords) safe — losing it means
+   users can no longer update the app:
+   ```bash
+   keytool -genkeypair -v -keystore epomail-release.jks -alias epomail \
+     -keyalg RSA -keysize 4096 -validity 10000
+   ```
+2. Local builds: create `android/key.properties` (git-ignored):
+   ```properties
+   storeFile=/absolute/path/to/epomail-release.jks
+   storePassword=...
+   keyAlias=epomail
+   keyPassword=...
+   ```
+3. GitHub Actions releases: add the repository secrets `EPO_KEYSTORE_BASE64`
+   (`base64 -w0 epomail-release.jks`), `EPO_KEYSTORE_PASSWORD`, `EPO_KEY_ALIAS`
+   and `EPO_KEY_PASSWORD`. The release workflow refuses to publish without them.
+
+### Security notes
+
+- The app only talks to `https://` servers; cleartext HTTP is rejected.
+- The session token is stored encrypted (Android Keystore) and is only sent to
+  the server that issued it.
+- Remote images in emails are hidden until you tap **Show images**; only
+  `http(s)`, `mailto` and `tel` links can be opened, after confirmation.
+
 ---
 
 ## 📦 Project Architecture
